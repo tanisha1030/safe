@@ -489,40 +489,32 @@ if show_pois:
         
         police_layer = folium.FeatureGroup(name="🚔 Police Stations")
         
-        for city in major_cities:
-            # Query police stations in each major city
-            elements = overpass_query_pois(city["lat"], city["lon"], radius_m=20000)
+        # Add some sample police stations for demonstration
+        sample_stations = [
+            {"name": "Delhi Police Headquarters", "lat": 28.6289, "lon": 77.2065, "city": "Delhi"},
+            {"name": "Mumbai Police Commissioner Office", "lat": 18.9220, "lon": 72.8347, "city": "Mumbai"},
+            {"name": "Bangalore City Police", "lat": 12.9716, "lon": 77.5946, "city": "Bangalore"},
+            {"name": "Chennai Police Station", "lat": 13.0827, "lon": 80.2707, "city": "Chennai"},
+            {"name": "Kolkata Police HQ", "lat": 22.5726, "lon": 88.3639, "city": "Kolkata"},
+        ]
+        
+        for station in sample_stations:
+            popup_html = f"""
+            <div style="font-family: Arial;">
+                <h4 style="margin: 0; color: #c0392b;">🚔 {station['name']}</h4>
+                <hr style="margin: 5px 0;">
+                <b>Location:</b> {station['city']}<br>
+                <b>Coordinates:</b> {station['lat']:.4f}, {station['lon']:.4f}<br>
+                <small style="color: #7f8c8d;">Emergency: 100</small>
+            </div>
+            """
             
-            for el in elements[:20]:  # Limit to avoid overcrowding
-                tags = el.get('tags', {})
-                if tags.get('amenity') in ('police', 'police_station'):
-                    if el.get('type') == 'node' and 'lat' in el and 'lon' in el:
-                        el_lat, el_lon = el['lat'], el['lon']
-                    elif 'center' in el:
-                        el_lat, el_lon = el['center']['lat'], el['center']['lon']
-                    else:
-                        continue
-                    
-                    station_name = tags.get('name', 'Police Station')
-                    phone = tags.get('phone', 'N/A')
-                    
-                    popup_html = f"""
-                    <div style="font-family: Arial;">
-                        <h4 style="margin: 0; color: #c0392b;">🚔 {station_name}</h4>
-                        <hr style="margin: 5px 0;">
-                        <b>Location:</b> {city['name']}<br>
-                        <b>Coordinates:</b> {el_lat:.4f}, {el_lon:.4f}<br>
-                        {f'<b>Phone:</b> {phone}<br>' if phone != 'N/A' else ''}
-                        <small style="color: #7f8c8d;">Emergency: 100</small>
-                    </div>
-                    """
-                    
-                    folium.Marker(
-                        location=[el_lat, el_lon],
-                        popup=folium.Popup(popup_html, max_width=250),
-                        tooltip=f"🚔 {station_name}",
-                        icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
-                    ).add_to(police_layer)
+            folium.Marker(
+                location=[station['lat'], station['lon']],
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=f"🚔 {station['name']}",
+                icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
+            ).add_to(police_layer)
         
         police_layer.add_to(m)
 
@@ -917,4 +909,4 @@ st.markdown(
     "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
     "3. For production use, consider paid geocoding/mapping services.\n"
     "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
-)
+    )
