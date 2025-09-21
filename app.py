@@ -34,8 +34,8 @@ st.markdown(
 # ---------------------------
 DEFAULT_GEOJSON_URLS = [
     "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson",
-    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson",
-    "https://raw.githubusercontent.com/udit-001/india-maps-data/main/geojson/districts/all.geojson"
+    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson"
+    
 ]
 DATA_FOLDER = "data"
 NEAREST_RADIUS_KM = 5  # radius for nearest POIs
