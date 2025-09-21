@@ -556,7 +556,7 @@ except ImportError:
     pass
 
 # Display the main map
-st_data = st_folium(m, width=1200, height=700, returned_data=["last_object_clicked"])
+st_data = st_folium(m, width=1200, height=700)
 
 # ---------------------------
 # Sidebar: location input
@@ -909,4 +909,4 @@ st.markdown(
     "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
     "3. For production use, consider paid geocoding/mapping services.\n"
     "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
-    )
+)
