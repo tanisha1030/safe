@@ -177,15 +177,12 @@ def load_geojson_from_url_or_upload(uploaded_file, urls):
     # Try multiple URLs
     for i, url in enumerate(urls):
         try:
-            st.info(f"Trying source {i+1}/{len(urls)}: {url.split('/')[-1]}")
             r = requests.get(url, timeout=30)
             r.raise_for_status()
             gj = r.json()
             gdf = gpd.GeoDataFrame.from_features(gj["features"])
-            st.success(f"Successfully loaded from source {i+1}")
             return gdf
         except Exception as e:
-            st.warning(f"Source {i+1} failed: {str(e)}")
             continue
     
     raise Exception("All sources failed")
@@ -198,10 +195,6 @@ except Exception as e:
     st.write("- https://github.com/geohacker/india/blob/master/district/india_district.geojson")
     st.write("- https://github.com/datta07/INDIAN-SHAPEFILES")
     st.stop()
-
-st.write("Sample GeoJSON properties columns detected:", list(gdf_districts.columns)[:10])
-st.write("Preview GeoJSON (first 3 rows):")
-st.dataframe(gdf_districts.head(3))
 
 # ---------------------------
 # Identify district name column in geojson - Improved detection
@@ -339,41 +332,19 @@ colormap.caption = "Crime count (gray = no data, green = low → red = high)"
 # ---------------------------
 st.subheader("🗺️ India — Interactive Crime Safety Map")
 
-# Map style selector
-col1, col2, col3 = st.columns([1, 1, 2])
+# Map configuration
+col1, col2 = st.columns([1, 1])
 with col1:
-    map_style = st.selectbox(
-        "Map Style:",
-        ["Street Map", "Satellite", "Terrain", "Dark Mode"],
-        index=0
-    )
-with col2:
     show_pois = st.checkbox("Show Police Stations", value=True)
-with col3:
+with col2:
     danger_threshold = st.slider("Danger Zone Threshold", 0.1, 1.0, 0.7, 0.1,
                                  help="Adjust what constitutes a 'danger zone'")
 
-# Map tile configurations
-tile_configs = {
-    "Street Map": "OpenStreetMap",
-    "Satellite": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    "Terrain": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}",
-    "Dark Mode": "CartoDB dark_matter"
-}
-
-tile_attr = {
-    "Street Map": "OpenStreetMap",
-    "Satellite": "Esri",
-    "Terrain": "Esri", 
-    "Dark Mode": "CartoDB"
-}
-
-# Create main map with selected style
+# Create main map
 m = folium.Map(
     location=[20.5937, 78.9629],  # Center of India
     zoom_start=5,
-    tiles=tile_configs[map_style],
-    attr=tile_attr[map_style]
+    tiles="OpenStreetMap"
 )
 
 # Add layer control
@@ -925,4 +896,4 @@ st.markdown(
     ⚠️ Note: Crime data may not be complete for all districts.
     """,
     unsafe_allow_html=True
-      )
+)
