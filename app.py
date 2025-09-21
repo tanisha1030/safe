@@ -40,6 +40,27 @@ def normalize_name(s):
     if pd.isna(s):
         return ""
     s = str(s).lower()
+    
+    # Handle common variations in Indian district names
+    replacements = {
+        'commr': 'commissioner',
+        'commissionerate': 'commissioner', 
+        'dist': 'district',
+        'north': 'n',
+        'south': 's', 
+        'east': 'e',
+        'west': 'w',
+        'parganas': 'pargana',
+        '24 pargana': 'twenty four pargana',
+        'a and n': 'andaman nicobar',
+        'a & n': 'andaman nicobar',
+        'city': '',
+        'rural': '',
+    }
+    
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+    
     # keep alnum and spaces
     s = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in s)
     s = " ".join(s.split())
@@ -177,26 +198,48 @@ st.dataframe(gdf_districts.head(3))
 # Identify district name column in geojson - Improved detection
 # ---------------------------
 name_col = None
-possible_name_cols = ['NAME', 'name', 'district', 'District', 'DISTRICT', 'dtname', 'DTNAME']
-for c in possible_name_cols:
-    if c in gdf_districts.columns:
-        name_col = c
-        break
 
-if name_col is None:
-    # fallback to any column with 'name' or 'dist' in it
-    for c in gdf_districts.columns:
-        lc = c.lower()
-        if "dist" in lc or "name" in lc:
+# Check for hierarchical naming patterns (NAME_2 is usually district level in GADM data)
+hierarchical_cols = ['NAME_2', 'NAME_3', 'DTNAME', 'name_2', 'district_name']
+for c in hierarchical_cols:
+    if c in gdf_districts.columns:
+        # Check if this column has diverse values (not all same like "India")
+        unique_vals = gdf_districts[c].nunique()
+        if unique_vals > 10:  # Should have many different district names
             name_col = c
             break
 
 if name_col is None:
+    # Try common district name patterns
+    possible_name_cols = ['NAME', 'name', 'district', 'District', 'DISTRICT', 'dtname']
+    for c in possible_name_cols:
+        if c in gdf_districts.columns:
+            unique_vals = gdf_districts[c].nunique()
+            if unique_vals > 10:
+                name_col = c
+                break
+
+if name_col is None:
+    # Last resort - find any column with diverse values that might be districts
+    for c in gdf_districts.columns:
+        if gdf_districts[c].dtype == 'object':  # String column
+            unique_vals = gdf_districts[c].nunique()
+            if unique_vals > 50:  # Likely to be district names if many unique values
+                name_col = c
+                break
+
+if name_col is None:
     st.error("Could not identify a district-name column in the GeoJSON. Available columns: " + str(list(gdf_districts.columns)))
-    st.write("Please upload a geojson with a district name column.")
+    st.write("Column details:")
+    for col in gdf_districts.columns:
+        if gdf_districts[col].dtype == 'object':
+            unique_count = gdf_districts[col].nunique()
+            sample_vals = gdf_districts[col].dropna().head(5).tolist()
+            st.write(f"- **{col}**: {unique_count} unique values, samples: {sample_vals}")
+    st.write("Please upload a geojson with a proper district name column.")
     st.stop()
 
-st.info(f"Using '{name_col}' as the district name column.")
+st.info(f"Using '{name_col}' as the district name column ({gdf_districts[name_col].nunique()} unique districts detected).")
 
 # create normalized name column
 gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
@@ -219,11 +262,32 @@ if missing > 0.5 * total:
     st.write("1. Check if your CSV district names match the GeoJSON names")
     st.write("2. Upload a different GeoJSON file that matches your data")
     
-    # Show some examples of unmatched
+    # Show some examples of unmatched vs CSV names
     unmatched_sample = merged[merged['crime_total'] == 0][name_col].head(10).tolist()
     csv_sample = crime_agg['district_example'].head(10).tolist()
-    st.write("**Sample GeoJSON districts (unmatched):**", unmatched_sample)
-    st.write("**Sample CSV districts:**", csv_sample)
+    
+    # Show normalized versions for debugging
+    unmatched_norm = merged[merged['crime_total'] == 0]['district_norm'].head(10).tolist()
+    csv_norm = crime_agg['district_norm'].head(10).tolist()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Sample GeoJSON districts (unmatched):**")
+        for orig, norm in zip(unmatched_sample, unmatched_norm):
+            st.write(f"'{orig}' → '{norm}'")
+    
+    with col2:
+        st.write("**Sample CSV districts:**")  
+        for orig, norm in zip(csv_sample, csv_norm):
+            st.write(f"'{orig}' → '{norm}'")
+    
+    # Show if there are any matches between the normalized names
+    geo_norms = set(merged['district_norm'].tolist())
+    csv_norms = set(crime_agg['district_norm'].tolist())
+    common = geo_norms.intersection(csv_norms)
+    st.write(f"**Common normalized names found:** {len(common)} out of {len(csv_norms)} CSV districts")
+    if len(common) > 0 and len(common) < 20:
+        st.write("Sample matches:", list(common)[:10])
 
 # classify into Low/Medium/High using quantiles (only for non-zero values)
 non_zero = merged[merged['crime_total'] > 0]['crime_total']
@@ -480,4 +544,4 @@ st.markdown(
     "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
     "3. For production use, consider paid geocoding/mapping services.\n"
     "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
-                )
+)
