@@ -25,7 +25,7 @@ st.markdown(
 # ---------------------------
 # PARAMETERS
 # ---------------------------
-DEFAULT_GEOJSON_URL = "https://raw.githubusercontent.com/datameet/maps/master/Districts/India_districts.geojson"
+DEFAULT_GEOJSON_URL = "https://raw.githubusercontent.com/guneetnarula/indian-district-boundaries/master/geojson/all_districts.geojson"
 DATA_FOLDER = "data"
 NEAREST_RADIUS_KM = 5  # radius for nearest POIs
 
