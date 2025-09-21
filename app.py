@@ -882,16 +882,4 @@ st.markdown(
     "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
     "3. For production use, consider paid geocoding/mapping services.\n"
     "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
- )
-
-# Footer / Notes
-st.markdown(
-    """
-    ---
-    Data sources: Aggregated district-level crime CSVs from multiple sources.<br>
-    GeoJSON: India district boundaries from public repositories.<br>
-    Points of Interest: OpenStreetMap via Overpass API.<br>
-    ⚠️ Note: Crime data may not be complete for all districts.
-    """,
-    unsafe_allow_html=True
-)
+                )
