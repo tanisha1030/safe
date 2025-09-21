@@ -14,6 +14,13 @@ import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
+# Import folium plugins
+try:
+    from folium.plugins import Fullscreen, MeasureControl, MarkerCluster
+except ImportError:
+    # Fallback if plugins not available
+    pass
+
 st.set_page_config(page_title="India Crime Heatmap", layout="wide")
 st.title("India Crime Heatmap — district-level (green → yellow → red)")
 st.markdown(
@@ -325,31 +332,239 @@ else:
 colormap.caption = "Crime count (gray = no data, green = low → red = high)"
 
 # ---------------------------
-# Draw national choropleth (folium)
+# Draw national choropleth (folium) - Enhanced Google Maps style
 # ---------------------------
-st.subheader("India — District-level crime heatmap")
-m = folium.Map(location=[22.0,80.0], zoom_start=5, tiles="cartodbpositron")
+st.subheader("🗺️ India — Interactive Crime Safety Map")
 
+# Map style selector
+col1, col2, col3 = st.columns([1, 1, 2])
+with col1:
+    map_style = st.selectbox(
+        "Map Style:",
+        ["Street Map", "Satellite", "Terrain", "Dark Mode"],
+        index=0
+    )
+with col2:
+    show_pois = st.checkbox("Show Police Stations", value=True)
+with col3:
+    danger_threshold = st.slider("Danger Zone Threshold", 0.1, 1.0, 0.7, 0.1, 
+                                help="Adjust what constitutes a 'danger zone'")
+
+# Map tile configurations
+tile_configs = {
+    "Street Map": "OpenStreetMap",
+    "Satellite": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "Terrain": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}",
+    "Dark Mode": "CartoDB dark_matter"
+}
+
+tile_attr = {
+    "Street Map": "OpenStreetMap",
+    "Satellite": "Esri",
+    "Terrain": "Esri", 
+    "Dark Mode": "CartoDB"
+}
+
+# Create main map with selected style
+m = folium.Map(
+    location=[20.5937, 78.9629],  # Center of India
+    zoom_start=5,
+    tiles=tile_configs[map_style],
+    attr=tile_attr[map_style]
+)
+
+# Add layer control
+folium.TileLayer('OpenStreetMap', name='Street Map').add_to(m)
+folium.TileLayer(
+    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attr='Esri',
+    name='Satellite View'
+).add_to(m)
+folium.TileLayer('CartoDB dark_matter', name='Dark Mode').add_to(m)
+
+# Enhanced styling function with danger zones
 def style_function(feature):
     val = feature['properties'].get('crime_total', 0)
+    safety_level = feature['properties'].get('safety_level', 'No Data')
+    
+    # Determine if it's a danger zone based on threshold
+    max_crime = merged['crime_total'].max()
+    is_danger_zone = val > (max_crime * danger_threshold) if max_crime > 0 else False
+    
+    if safety_level == "No Data":
+        color_fill = '#f0f0f0'  # Light gray
+        border_color = '#cccccc'
+        border_weight = 0.5
+    elif is_danger_zone:
+        color_fill = '#ff0000'  # Bright red for danger zones
+        border_color = '#cc0000'
+        border_weight = 2.0
+    elif safety_level == "High":
+        color_fill = '#ff6b6b'  # Red
+        border_color = '#e55353'
+        border_weight = 1.0
+    elif safety_level == "Medium":
+        color_fill = '#ffd93d'  # Yellow
+        border_color = '#ffcc02'
+        border_weight = 0.8
+    else:  # Low
+        color_fill = '#6bcf7f'  # Green
+        border_color = '#51b364'
+        border_weight = 0.6
+    
     return {
-        'fillColor': colormap(val),
-        'color': 'black',
-        'weight': 0.4,
-        'fillOpacity': 0.7
+        'fillColor': color_fill,
+        'color': border_color,
+        'weight': border_weight,
+        'fillOpacity': 0.7,
+        'opacity': 1
     }
 
-tooltip_fields = [name_col, 'crime_total', 'safety_level']
-tooltip_aliases = ["District","Crime Count","Safety Level"]
-folium.GeoJson(
-    merged.to_json(),
-    name="Districts",
-    style_function=style_function,
-    tooltip=folium.GeoJsonTooltip(fields=tooltip_fields, aliases=tooltip_aliases, localize=True)
-).add_to(m)
+# Enhanced tooltip with more information
+def create_tooltip_html(row):
+    district = row[name_col]
+    crime_count = int(row['crime_total'])
+    safety = row['safety_level']
+    
+    # Safety emoji
+    emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "No Data": "⚫"}.get(safety, "⚫")
+    
+    # Determine danger status
+    max_crime = merged['crime_total'].max()
+    is_danger = crime_count > (max_crime * danger_threshold) if max_crime > 0 else False
+    danger_text = "🚨 DANGER ZONE" if is_danger else ""
+    
+    html = f"""
+    <div style="font-family: Arial; font-size: 12px; min-width: 200px;">
+        <b style="font-size: 14px;">{district}</b><br>
+        <hr style="margin: 5px 0;">
+        Safety Level: <b>{safety} {emoji}</b><br>
+        Crime Count: <b>{crime_count:,}</b><br>
+        {f'<span style="color: red; font-weight: bold;">{danger_text}</span><br>' if is_danger else ''}
+        <small style="color: #666;">Click for more details</small>
+    </div>
+    """
+    return html
 
-colormap.add_to(m)
-st_data = st_folium(m, width=1000, height=650)
+# Add district polygons with enhanced styling
+district_layer = folium.FeatureGroup(name="🏛️ Districts")
+for _, row in merged.iterrows():
+    # Create popup with detailed information
+    popup_html = f"""
+    <div style="font-family: Arial; max-width: 250px;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50;">{row[name_col]}</h4>
+        <table style="width: 100%; font-size: 12px;">
+            <tr><td><b>Safety Level:</b></td><td>{row['safety_level']}</td></tr>
+            <tr><td><b>Crime Count:</b></td><td>{int(row['crime_total']):,}</td></tr>
+            <tr><td><b>Risk Category:</b></td><td>{'High Risk' if row['crime_total'] > (merged['crime_total'].max() * danger_threshold) else 'Moderate/Low Risk'}</td></tr>
+        </table>
+        <hr style="margin: 10px 0;">
+        <small style="color: #7f8c8d;">Based on aggregated crime data from multiple sources</small>
+    </div>
+    """
+    
+    folium.GeoJson(
+        row.geometry.__geo_interface__,
+        style_function=lambda x, row=row: style_function({'properties': row}),
+        popup=folium.Popup(popup_html, max_width=300),
+        tooltip=create_tooltip_html(row)
+    ).add_to(district_layer)
+
+district_layer.add_to(m)
+
+# Add police stations layer if enabled
+if show_pois:
+    with st.spinner("Loading police stations across India..."):
+        # Query major police stations in major cities
+        major_cities = [
+            {"name": "Delhi", "lat": 28.6139, "lon": 77.2090},
+            {"name": "Mumbai", "lat": 19.0760, "lon": 72.8777},
+            {"name": "Bangalore", "lat": 12.9716, "lon": 77.5946},
+            {"name": "Chennai", "lat": 13.0827, "lon": 80.2707},
+            {"name": "Kolkata", "lat": 22.5726, "lon": 88.3639},
+            {"name": "Hyderabad", "lat": 17.3850, "lon": 78.4867},
+            {"name": "Pune", "lat": 18.5204, "lon": 73.8567},
+            {"name": "Ahmedabad", "lat": 23.0225, "lon": 72.5714},
+        ]
+        
+        police_layer = folium.FeatureGroup(name="🚔 Police Stations")
+        
+        for city in major_cities:
+            # Query police stations in each major city
+            elements = overpass_query_pois(city["lat"], city["lon"], radius_m=20000)
+            
+            for el in elements[:20]:  # Limit to avoid overcrowding
+                tags = el.get('tags', {})
+                if tags.get('amenity') in ('police', 'police_station'):
+                    if el.get('type') == 'node' and 'lat' in el and 'lon' in el:
+                        el_lat, el_lon = el['lat'], el['lon']
+                    elif 'center' in el:
+                        el_lat, el_lon = el['center']['lat'], el['center']['lon']
+                    else:
+                        continue
+                    
+                    station_name = tags.get('name', 'Police Station')
+                    phone = tags.get('phone', 'N/A')
+                    
+                    popup_html = f"""
+                    <div style="font-family: Arial;">
+                        <h4 style="margin: 0; color: #c0392b;">🚔 {station_name}</h4>
+                        <hr style="margin: 5px 0;">
+                        <b>Location:</b> {city['name']}<br>
+                        <b>Coordinates:</b> {el_lat:.4f}, {el_lon:.4f}<br>
+                        {f'<b>Phone:</b> {phone}<br>' if phone != 'N/A' else ''}
+                        <small style="color: #7f8c8d;">Emergency: 100</small>
+                    </div>
+                    """
+                    
+                    folium.Marker(
+                        location=[el_lat, el_lon],
+                        popup=folium.Popup(popup_html, max_width=250),
+                        tooltip=f"🚔 {station_name}",
+                        icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
+                    ).add_to(police_layer)
+        
+        police_layer.add_to(m)
+
+# Add legend
+legend_html = f"""
+<div style="position: fixed; 
+     bottom: 50px; left: 50px; width: 200px; height: 180px; 
+     background-color: white; border:2px solid grey; z-index:9999; 
+     font-size:12px; padding: 10px; box-shadow: 0 0 15px rgba(0,0,0,0.2);
+     border-radius: 5px;">
+     
+<h4 style="margin: 0 0 10px 0; text-align: center;">🛡️ Safety Legend</h4>
+<p style="margin: 5px 0;"><span style="color: #6bcf7f;">🟢</span> <b>Low Risk</b> - Safe areas</p>
+<p style="margin: 5px 0;"><span style="color: #ffd93d;">🟡</span> <b>Medium Risk</b> - Moderate caution</p>
+<p style="margin: 5px 0;"><span style="color: #ff6b6b;">🔴</span> <b>High Risk</b> - Exercise caution</p>
+<p style="margin: 5px 0;"><span style="color: #ff0000;">🚨</span> <b>Danger Zone</b> - High alert</p>
+<p style="margin: 5px 0;"><span style="color: #f0f0f0;">⚫</span> <b>No Data</b> - Insufficient info</p>
+<hr style="margin: 8px 0;">
+<p style="margin: 5px 0; font-size: 10px;"><span style="color: red;">🚔</span> Police Stations</p>
+</div>
+"""
+m.get_root().html.add_child(folium.Element(legend_html))
+
+# Add layer control
+folium.LayerControl().add_to(m)
+
+# Add fullscreen button
+try:
+    from folium.plugins import Fullscreen
+    Fullscreen().add_to(m)
+except ImportError:
+    pass
+
+# Add measure tool
+try:
+    from folium.plugins import MeasureControl
+    MeasureControl().add_to(m)
+except ImportError:
+    pass
+
+# Display the main map
+st_data = st_folium(m, width=1200, height=700, returned_data=["last_object_clicked"])
 
 # ---------------------------
 # Sidebar: location input
@@ -468,52 +683,210 @@ if loc_input:
                 elements = overpass_query_pois(lat, lon, radius_m=NEAREST_RADIUS_KM*1000)
             st.write(f"Found {len(elements)} nearby POI elements (police/residential/shelters) within {NEAREST_RADIUS_KM} km via Overpass API.")
 
-            # Build a focused map
-            m_local = folium.Map(location=[lat, lon], zoom_start=13, tiles="cartodbpositron")
-            # draw nearby districts colored
+            # Build a focused local area map
+            st.subheader("🔍 Local Safety Analysis Map")
+            
+            # Local map controls
+            local_col1, local_col2 = st.columns(2)
+            with local_col1:
+                local_map_style = st.selectbox("Local Map Style:", ["Street", "Satellite", "Hybrid"], key="local_style")
+            with local_col2:
+                search_radius = st.slider("POI Search Radius (km):", 1, 20, 5, key="search_radius")
+            
+            # Configure local map tiles
+            if local_map_style == "Street":
+                local_tiles = "OpenStreetMap"
+            elif local_map_style == "Satellite":
+                local_tiles = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            else:  # Hybrid
+                local_tiles = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            
+            m_local = folium.Map(
+                location=[lat, lon], 
+                zoom_start=12, 
+                tiles=local_tiles,
+                attr="Esri" if local_map_style != "Street" else "OpenStreetMap"
+            )
+            
+            # Add different tile layers
+            folium.TileLayer('OpenStreetMap', name='Street View').add_to(m_local)
+            folium.TileLayer(
+                tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                attr='Esri',
+                name='Satellite View'
+            ).add_to(m_local)
+            
+            # Draw nearby districts with enhanced styling
             for _, row in nearby_districts.iterrows():
                 try:
                     geom = row.geometry
                     lvl = row['safety_level']
+                    district_name = row[name_col]
+                    crime_count = int(row['crime_total'])
+                    
                     if lvl == "No Data":
-                        color = "lightgray"
-                    else:
-                        color = "green" if lvl=="Low" else ("yellow" if lvl=="Medium" else "red")
-                    folium.GeoJson(data=geom.__geo_interface__, style_function=lambda feat, col=color: {
-                        'fillColor': col, 'color':'black', 'weight':0.6, 'fillOpacity':0.4
-                    }).add_to(m_local)
+                        color = "#f0f0f0"
+                        border_color = "#cccccc"
+                    elif lvl == "High":
+                        color = "#ff6b6b"
+                        border_color = "#e55353"
+                    elif lvl == "Medium":
+                        color = "#ffd93d"
+                        border_color = "#ffcc02"
+                    else:  # Low
+                        color = "#6bcf7f"
+                        border_color = "#51b364"
+                    
+                    # Enhanced popup for districts
+                    popup_html = f"""
+                    <div style="font-family: Arial; max-width: 220px;">
+                        <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{district_name}</h4>
+                        <table style="width: 100%; font-size: 11px;">
+                            <tr><td><b>Safety Level:</b></td><td>{lvl}</td></tr>
+                            <tr><td><b>Crime Count:</b></td><td>{crime_count:,}</td></tr>
+                            <tr><td><b>Distance:</b></td><td>{row['dist_km']:.1f} km</td></tr>
+                        </table>
+                    </div>
+                    """
+                    
+                    folium.GeoJson(
+                        data=geom.__geo_interface__, 
+                        style_function=lambda feat, col=color, border=border_color: {
+                            'fillColor': col, 
+                            'color': border, 
+                            'weight': 1.5, 
+                            'fillOpacity': 0.6,
+                            'opacity': 1
+                        },
+                        popup=folium.Popup(popup_html, max_width=250),
+                        tooltip=f"{district_name} - {lvl}"
+                    ).add_to(m_local)
                 except Exception:
                     pass
 
-            # add user marker
-            folium.CircleMarker(location=[lat,lon], radius=8, color="blue", fill=True, fill_opacity=1, popup="You are here", tooltip="Your Location").add_to(m_local)
+            # Add user location with enhanced marker
+            folium.CircleMarker(
+                location=[lat, lon], 
+                radius=12, 
+                color="blue", 
+                fill=True, 
+                fill_opacity=0.9, 
+                popup=folium.Popup(f"<b>📍 Your Location</b><br>{lat:.5f}, {lon:.5f}", max_width=200),
+                tooltip="📍 You are here"
+            ).add_to(m_local)
+            
+            # Add search radius circle
+            folium.Circle(
+                location=[lat, lon],
+                radius=search_radius * 1000,  # Convert km to meters
+                color="blue",
+                fill=False,
+                weight=2,
+                opacity=0.5,
+                popup=f"Search Radius: {search_radius} km"
+            ).add_to(m_local)
 
-            # Add POI markers
-            poi_count = 0
+            # Enhanced POI markers with clustering
+            try:
+                marker_cluster = MarkerCluster(name="📍 Points of Interest").add_to(m_local)
+            except:
+                marker_cluster = m_local  # Fallback if clustering not available
+            
+            # Re-fetch POIs with updated radius
+            elements = overpass_query_pois(lat, lon, radius_m=search_radius*1000)
+            
+            poi_categories = {
+                'police': {'count': 0, 'icon': 'shield-alt', 'color': 'red', 'prefix': 'fa'},
+                'hospital': {'count': 0, 'icon': 'plus', 'color': 'blue', 'prefix': 'fa'},
+                'residential': {'count': 0, 'icon': 'home', 'color': 'green', 'prefix': 'fa'},
+                'shelter': {'count': 0, 'icon': 'bed', 'color': 'purple', 'prefix': 'fa'}
+            }
+            
             for el in elements:
-                # obtain coordinates
+                # Get coordinates
                 if el.get('type') == 'node' and 'lat' in el and 'lon' in el:
                     el_lat, el_lon = el['lat'], el['lon']
                 elif 'center' in el:
                     el_lat, el_lon = el['center']['lat'], el['center']['lon']
                 else:
                     continue
+                
                 tags = el.get('tags', {})
                 name = tags.get('name', tags.get('operator', 'POI'))
-                # choose icon by tag
-                if tags.get('amenity') in ('police','police_station'):
-                    icon = folium.Icon(color='red', icon='shield-alt', prefix='fa')
-                elif tags.get('amenity') in ('shelter',):
-                    icon = folium.Icon(color='purple', icon='home', prefix='fa')
-                elif tags.get('building') == 'residential' or tags.get('landuse') == 'residential':
-                    icon = folium.Icon(color='green', icon='home', prefix='fa')
+                distance = geodesic((lat, lon), (el_lat, el_lon)).km
+                
+                # Categorize POI
+                amenity = tags.get('amenity', '')
+                building = tags.get('building', '')
+                landuse = tags.get('landuse', '')
+                healthcare = tags.get('healthcare', '')
+                
+                if amenity in ('police', 'police_station'):
+                    category = 'police'
+                    icon_config = poi_categories['police']
+                elif amenity == 'shelter' or 'shelter' in name.lower():
+                    category = 'shelter'
+                    icon_config = poi_categories['shelter']
+                elif healthcare or amenity in ('hospital', 'clinic'):
+                    category = 'hospital'
+                    icon_config = poi_categories['hospital']
+                elif building == 'residential' or landuse == 'residential':
+                    category = 'residential'
+                    icon_config = poi_categories['residential']
                 else:
-                    icon = folium.Icon(color='gray', icon='circle', prefix='fa')
-                folium.Marker(location=[el_lat, el_lon], popup=f"{name}", tooltip=str(tags.get('amenity', tags.get('building',''))), icon=icon).add_to(m_local)
-                poi_count += 1
+                    continue  # Skip unknown POIs
+                
+                poi_categories[category]['count'] += 1
+                
+                # Create detailed popup
+                popup_html = f"""
+                <div style="font-family: Arial; max-width: 200px;">
+                    <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{name}</h4>
+                    <hr style="margin: 5px 0;">
+                    <b>Type:</b> {category.title()}<br>
+                    <b>Distance:</b> {distance:.2f} km<br>
+                    <b>Coordinates:</b> {el_lat:.4f}, {el_lon:.4f}<br>
+                    {f"<b>Phone:</b> {tags.get('phone', 'N/A')}<br>" if tags.get('phone') else ''}
+                    <hr style="margin: 5px 0;">
+                    <small style="color: #7f8c8d;">Source: OpenStreetMap</small>
+                </div>
+                """
+                
+                folium.Marker(
+                    location=[el_lat, el_lon],
+                    popup=folium.Popup(popup_html, max_width=220),
+                    tooltip=f"{icon_config['color'].title()} {category.title()}: {name}",
+                    icon=folium.Icon(
+                        color=icon_config['color'], 
+                        icon=icon_config['icon'], 
+                        prefix=icon_config['prefix']
+                    )
+                ).add_to(marker_cluster)
 
-            st.subheader("Local map — colored surrounding districts + nearby POIs")
-            st_folium(m_local, width=950, height=600)
+            # Add layer control to local map
+            folium.LayerControl().add_to(m_local)
+            
+            # Add fullscreen button
+            try:
+                Fullscreen().add_to(m_local)
+            except:
+                pass
+            
+            # Display local map
+            st_folium(m_local, width=1000, height=600)
+            
+            # POI Summary Statistics
+            st.subheader("📊 Nearby Points of Interest Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("🚔 Police Stations", poi_categories['police']['count'])
+            with col2:
+                st.metric("🏥 Healthcare", poi_categories['hospital']['count'])
+            with col3:
+                st.metric("🏠 Residential Areas", poi_categories['residential']['count'])
+            with col4:
+                st.metric("🏨 Shelters", poi_categories['shelter']['count'])
 
             # list nearest police stations (text)
             police_items = []
