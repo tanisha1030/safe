@@ -241,8 +241,6 @@ if name_col is None:
     st.write("Please upload a geojson with a proper district name column.")
     st.stop()
 
-st.info(f"Using '{name_col}' as the district name column ({gdf_districts[name_col].nunique()} unique districts detected).")
-
 # create normalized name column
 gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
 
