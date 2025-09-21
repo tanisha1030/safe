@@ -1,10 +1,9 @@
-
 streamlit
 pandas
 geopandas
+shapely
 geopy
 folium
-streamlit_folium
 branca
+streamlit-folium
 requests
-shapely
