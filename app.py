@@ -23,9 +23,13 @@ st.markdown(
 )
 
 # ---------------------------
-# PARAMETERS
+# PARAMETERS - Updated working URLs
 # ---------------------------
-DEFAULT_GEOJSON_URL = "https://raw.githubusercontent.com/guneetnarula/indian-district-boundaries/master/geojson/all_districts.geojson"
+DEFAULT_GEOJSON_URLS = [
+    "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson",
+    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson",
+    "https://raw.githubusercontent.com/udit-001/india-maps-data/main/geojson/districts/all.geojson"
+]
 DATA_FOLDER = "data"
 NEAREST_RADIUS_KM = 5  # radius for nearest POIs
 
@@ -100,7 +104,7 @@ def load_and_aggregate_csvs(data_folder):
         aggregated_rows.append(small)
 
     if not aggregated_rows:
-        return pd.DataFrame(), files
+        return pd.DataFrame(), files, failed
 
     all_small = pd.concat(aggregated_rows, ignore_index=True)
     # group by normalized district and sum
@@ -109,7 +113,6 @@ def load_and_aggregate_csvs(data_folder):
         'district_raw': lambda x: x.iloc[0]
     }).rename(columns={'file_total':'crime_total', 'district_raw':'district_example'})
 
-    # Keep original raw example also
     return agg, files, failed
 
 crime_agg, csv_files, failed_reads = load_and_aggregate_csvs(DATA_FOLDER)
@@ -129,26 +132,41 @@ uploaded_geo = None
 if geo_choice == "Upload my geojson":
     uploaded_geo = st.sidebar.file_uploader("Upload India districts GeoJSON", type=["json","geojson"])
 else:
-    st.sidebar.write("Default: will try to download district-level geojson from a community repo.")
+    st.sidebar.write("Default: will try multiple sources for district-level geojson.")
 
 # ---------------------------
-# Load GeoJSON (districts)
+# Load GeoJSON (districts) - Try multiple sources
 # ---------------------------
 @st.cache_data(show_spinner=False)
-def load_geojson_from_url_or_upload(uploaded_file, url):
+def load_geojson_from_url_or_upload(uploaded_file, urls):
     if uploaded_file is not None:
         gj = json.load(uploaded_file)
-    else:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        gj = r.json()
-    gdf = gpd.GeoDataFrame.from_features(gj["features"])
-    return gdf
+        gdf = gpd.GeoDataFrame.from_features(gj["features"])
+        return gdf
+    
+    # Try multiple URLs
+    for i, url in enumerate(urls):
+        try:
+            st.info(f"Trying source {i+1}/{len(urls)}: {url.split('/')[-1]}")
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            gj = r.json()
+            gdf = gpd.GeoDataFrame.from_features(gj["features"])
+            st.success(f"Successfully loaded from source {i+1}")
+            return gdf
+        except Exception as e:
+            st.warning(f"Source {i+1} failed: {str(e)}")
+            continue
+    
+    raise Exception("All sources failed")
 
 try:
-    gdf_districts = load_geojson_from_url_or_upload(uploaded_geo, DEFAULT_GEOJSON_URL)
+    gdf_districts = load_geojson_from_url_or_upload(uploaded_geo, DEFAULT_GEOJSON_URLS)
 except Exception as e:
-    st.error("Could not load remote GeoJSON. Please upload a district-level GeoJSON file. Error: " + str(e))
+    st.error("Could not load any remote GeoJSON sources. Please upload a district-level GeoJSON file.")
+    st.write("You can download district boundaries from:")
+    st.write("- https://github.com/geohacker/india/blob/master/district/india_district.geojson")
+    st.write("- https://github.com/datta07/INDIAN-SHAPEFILES")
     st.stop()
 
 st.write("Sample GeoJSON properties columns detected:", list(gdf_districts.columns)[:10])
@@ -156,17 +174,29 @@ st.write("Preview GeoJSON (first 3 rows):")
 st.dataframe(gdf_districts.head(3))
 
 # ---------------------------
-# Identify district name column in geojson
+# Identify district name column in geojson - Improved detection
 # ---------------------------
 name_col = None
-for c in gdf_districts.columns:
-    lc = c.lower()
-    if "dist" in lc or "name" in lc:
+possible_name_cols = ['NAME', 'name', 'district', 'District', 'DISTRICT', 'dtname', 'DTNAME']
+for c in possible_name_cols:
+    if c in gdf_districts.columns:
         name_col = c
         break
+
 if name_col is None:
-    st.error("Could not identify a district-name column in the GeoJSON. Please upload a geojson with a 'district' or 'name' attribute.")
+    # fallback to any column with 'name' or 'dist' in it
+    for c in gdf_districts.columns:
+        lc = c.lower()
+        if "dist" in lc or "name" in lc:
+            name_col = c
+            break
+
+if name_col is None:
+    st.error("Could not identify a district-name column in the GeoJSON. Available columns: " + str(list(gdf_districts.columns)))
+    st.write("Please upload a geojson with a district name column.")
     st.stop()
+
+st.info(f"Using '{name_col}' as the district name column.")
 
 # create normalized name column
 gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
@@ -178,17 +208,35 @@ gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
 merged = gdf_districts.merge(crime_agg[['district_norm','crime_total']], on='district_norm', how='left')
 merged['crime_total'] = merged['crime_total'].fillna(0)
 
-# If many NaNs, display hint
-missing = merged['crime_total'].isna().sum()
-if missing > 0:
-    st.info(f"{missing} districts had no matched crime_total → treated as 0. Consider mapping name variants if mismatches are large.")
+# Show matching stats
+matched = (merged['crime_total'] > 0).sum()
+total = len(merged)
+missing = total - matched
+st.info(f"District matching: {matched}/{total} districts have crime data. {missing} districts show 0 (no match found).")
 
-# classify into Low/Medium/High using quantiles
-q1 = merged['crime_total'].quantile(0.33)
-q2 = merged['crime_total'].quantile(0.66)
+if missing > 0.5 * total:
+    st.warning("⚠️ Many districts are unmatched. Consider:")
+    st.write("1. Check if your CSV district names match the GeoJSON names")
+    st.write("2. Upload a different GeoJSON file that matches your data")
+    
+    # Show some examples of unmatched
+    unmatched_sample = merged[merged['crime_total'] == 0][name_col].head(10).tolist()
+    csv_sample = crime_agg['district_example'].head(10).tolist()
+    st.write("**Sample GeoJSON districts (unmatched):**", unmatched_sample)
+    st.write("**Sample CSV districts:**", csv_sample)
+
+# classify into Low/Medium/High using quantiles (only for non-zero values)
+non_zero = merged[merged['crime_total'] > 0]['crime_total']
+if len(non_zero) > 0:
+    q1 = non_zero.quantile(0.33)
+    q2 = non_zero.quantile(0.66)
+else:
+    q1, q2 = 0, 0
 
 def classify_val(n):
-    if n <= q1:
+    if n == 0:
+        return "No Data"
+    elif n <= q1:
         return "Low"
     elif n <= q2:
         return "Medium"
@@ -202,12 +250,15 @@ merged['safety_level'] = merged['crime_total'].apply(classify_val)
 # ---------------------------
 vmin = merged['crime_total'].min()
 vmax = merged['crime_total'].max()
-colormap = StepColormap(
-    colors=["green","yellow","red"],
-    index=[vmin, q1, q2, vmax],
-    vmin=vmin, vmax=vmax
-)
-colormap.caption = "Crime count (green = low → red = high)"
+if vmax > 0:
+    colormap = StepColormap(
+        colors=["lightgray","green","yellow","red"],
+        index=[vmin, 0.1, q1, q2, vmax],
+        vmin=vmin, vmax=vmax
+    )
+else:
+    colormap = StepColormap(colors=["lightgray"], index=[0,1], vmin=0, vmax=1)
+colormap.caption = "Crime count (gray = no data, green = low → red = high)"
 
 # ---------------------------
 # Draw national choropleth (folium)
@@ -257,7 +308,7 @@ def parse_or_geocode(s):
                 pass
     # else geocode
     try:
-        loc = geolocator.geocode(s)
+        loc = geolocator.geocode(s + ", India")  # Add India for better results
         if loc:
             return loc.latitude, loc.longitude, loc.address
     except Exception as e:
@@ -268,12 +319,12 @@ def parse_or_geocode(s):
 def find_district_for_point(point_latlon, merged_gdf):
     lat, lon = point_latlon
     pt = Point(lon, lat)
-    # ensure GeoSeries geometry is shapely and in lat/lon (assume EPSG:4326)
-    # check containment (works with shapely)
+    # check containment
     contains = merged_gdf[merged_gdf.contains(pt)]
     if len(contains) > 0:
         return contains.iloc[0]
     # else find nearest by centroid distance
+    merged_gdf = merged_gdf.copy()
     merged_gdf['centroid'] = merged_gdf.geometry.centroid
     distances = merged_gdf['centroid'].apply(lambda c: geodesic((c.y, c.x), (lat, lon)).km)
     merged_gdf['dist_km_to_point'] = distances
@@ -283,6 +334,7 @@ def find_district_for_point(point_latlon, merged_gdf):
 # helper: find districts within radius_km
 def districts_within_radius(point_latlon, gdf, radius_km=10):
     lat, lon = point_latlon
+    gdf = gdf.copy()
     gdf['centroid'] = gdf.geometry.centroid
     gdf['dist_km'] = gdf['centroid'].apply(lambda c: geodesic((c.y,c.x),(lat,lon)).km)
     near = gdf[gdf['dist_km'] <= radius_km].copy()
@@ -311,6 +363,7 @@ def overpass_query_pois(lat, lon, radius_m=5000):
         data = res.json()
         return data.get('elements', [])
     except Exception as e:
+        st.warning(f"Overpass API error: {str(e)}")
         return []
 
 # On submit:
@@ -322,6 +375,7 @@ if loc_input:
         else:
             lat, lon, resolved = p[0], p[1], (p[2] if len(p)>2 else None)
             st.sidebar.markdown(f"**Resolved:** {resolved if resolved else ''} ({lat:.5f}, {lon:.5f})")
+            
             # find district
             nearest_district_row = find_district_for_point((lat, lon), merged.copy())
             st.write("### Location analysis")
@@ -329,7 +383,12 @@ if loc_input:
                 district_name = nearest_district_row[name_col]
                 safety = nearest_district_row['safety_level']
                 crime_count = int(nearest_district_row['crime_total'])
-                st.success(f"You are in/near **{district_name}** — Safety Level: **{safety}** (crime count: {crime_count})")
+                
+                if safety == "No Data":
+                    st.warning(f"You are in/near **{district_name}** — **No crime data available** for this district.")
+                else:
+                    color = "🟢" if safety == "Low" else ("🟡" if safety == "Medium" else "🔴")
+                    st.success(f"You are in/near **{district_name}** — Safety Level: **{safety}** {color} (crime count: {crime_count})")
             except Exception:
                 st.info("Could not map to a district polygon; showing nearest districts.")
 
@@ -341,7 +400,8 @@ if loc_input:
                 st.dataframe(nd_display.head(20))
 
             # Overpass POIs
-            elements = overpass_query_pois(lat, lon, radius_m=NEAREST_RADIUS_KM*1000)
+            with st.spinner("Fetching nearby points of interest..."):
+                elements = overpass_query_pois(lat, lon, radius_m=NEAREST_RADIUS_KM*1000)
             st.write(f"Found {len(elements)} nearby POI elements (police/residential/shelters) within {NEAREST_RADIUS_KM} km via Overpass API.")
 
             # Build a focused map
@@ -351,7 +411,10 @@ if loc_input:
                 try:
                     geom = row.geometry
                     lvl = row['safety_level']
-                    color = "green" if lvl=="Low" else ("yellow" if lvl=="Medium" else "red")
+                    if lvl == "No Data":
+                        color = "lightgray"
+                    else:
+                        color = "green" if lvl=="Low" else ("yellow" if lvl=="Medium" else "red")
                     folium.GeoJson(data=geom.__geo_interface__, style_function=lambda feat, col=color: {
                         'fillColor': col, 'color':'black', 'weight':0.6, 'fillOpacity':0.4
                     }).add_to(m_local)
@@ -359,7 +422,7 @@ if loc_input:
                     pass
 
             # add user marker
-            folium.CircleMarker(location=[lat,lon], radius=6, color="blue", fill=True, fill_opacity=1, popup="You are here").add_to(m_local)
+            folium.CircleMarker(location=[lat,lon], radius=8, color="blue", fill=True, fill_opacity=1, popup="You are here", tooltip="Your Location").add_to(m_local)
 
             # Add POI markers
             poi_count = 0
@@ -375,13 +438,13 @@ if loc_input:
                 name = tags.get('name', tags.get('operator', 'POI'))
                 # choose icon by tag
                 if tags.get('amenity') in ('police','police_station'):
-                    icon = folium.Icon(color='red', icon='shield')
+                    icon = folium.Icon(color='red', icon='shield-alt', prefix='fa')
                 elif tags.get('amenity') in ('shelter',):
-                    icon = folium.Icon(color='purple', icon='info-sign')
+                    icon = folium.Icon(color='purple', icon='home', prefix='fa')
                 elif tags.get('building') == 'residential' or tags.get('landuse') == 'residential':
-                    icon = folium.Icon(color='green', icon='home')
+                    icon = folium.Icon(color='green', icon='home', prefix='fa')
                 else:
-                    icon = folium.Icon(color='gray', icon='circle')
+                    icon = folium.Icon(color='gray', icon='circle', prefix='fa')
                 folium.Marker(location=[el_lat, el_lon], popup=f"{name}", tooltip=str(tags.get('amenity', tags.get('building',''))), icon=icon).add_to(m_local)
                 poi_count += 1
 
@@ -403,15 +466,18 @@ if loc_input:
                     dkm = geodesic((lat,lon),(latp,lonp)).km
                     police_items.append((name, dkm, latp, lonp))
             if police_items:
-                st.write("Nearest police stations (sorted by distance):")
+                st.write("🚔 **Nearest police stations** (sorted by distance):")
                 police_items_sorted = sorted(police_items, key=lambda x: x[1])
                 for name, dkm, plat, plon in police_items_sorted[:10]:
                     st.write(f"- **{name}** — {dkm:.2f} km — ({plat:.5f}, {plon:.5f})")
             else:
-                st.write("No police stations found within the Overpass radius.")
+                st.write("No police stations found within the search radius.")
 
 st.markdown("---")
 st.markdown(
-    "Notes: 1) District-name mismatches are common; if many districts show zero, upload a GeoJSON which matches your CSV names or adjust names. "
-    "2) Overpass/Nominatim are public services and may rate-limit. For production use consider a paid geocoding / tile service."
-)
+    "**Notes:** \n"
+    "1. District-name mismatches are common between CSVs and GeoJSON files. If many districts show zero, check name variations.\n"
+    "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
+    "3. For production use, consider paid geocoding/mapping services.\n"
+    "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
+                )
