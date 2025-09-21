@@ -1,76 +1,61 @@
 import os
 import pandas as pd
-import json
 import folium
+import requests
 from folium.plugins import MarkerCluster
 from rapidfuzz import process, fuzz
+from shapely.geometry import shape
+import streamlit as st
+from streamlit_folium import st_folium
 
-# ==========================
-# CONFIGURATION
-# ==========================
-DATA_DIR = "data"  # Folder with CSV files
-GEOJSON_FILE = "india_district.geojson"
+# Constants
+DATA_DIR = "data"  # Folder containing all 57 CSV files
+GEOJSON_URL = "https://raw.githubusercontent.com/udit-001/india-maps-data/main/districts/INDIA_DISTRICTS.geojson"
 OUTPUT_JSON = "district_crime_scores.json"
 
-# Manual district mapping (add as needed)
-manual_map = {
-    "Bengaluru": "Bangalore",
-    "Thiruvananthapuram": "Trivandrum",
-    # Add other known variations here
-}
+# Load and aggregate all CSV files
+@st.cache_data
+def load_crime_data():
+    all_files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+    df_list = []
+    for file in all_files:
+        df = pd.read_csv(file)
+        df_list.append(df)
+    crime_data = pd.concat(df_list, ignore_index=True)
+    crime_data['District'] = crime_data['District'].str.strip()
+    district_crime = crime_data.groupby('District')['Crime_Count'].sum().reset_index()
+    return district_crime
 
-# ==========================
-# LOAD AND AGGREGATE CSVs
-# ==========================
-all_files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".csv")]
-dfs = []
-for f in all_files:
-    df = pd.read_csv(f)
-    dfs.append(df)
-crime_data = pd.concat(dfs, ignore_index=True)
+# Load GeoJSON
+@st.cache_data
+def load_geojson():
+    r = requests.get(GEOJSON_URL)
+    r.raise_for_status()
+    return r.json()
 
-# Assuming CSV has 'District' and 'Crime_Count' columns
-crime_data['District'] = crime_data['District'].replace(manual_map)
-district_crime = crime_data.groupby('District')['Crime_Count'].sum().reset_index()
+district_crime = load_crime_data()
+geojson = load_geojson()
 
-# ==========================
-# LOAD GEOJSON
-# ==========================
-with open(GEOJSON_FILE, 'r', encoding='utf-8') as f:
-    geojson = json.load(f)
+# Extract district names from GeoJSON
+district_names = [feature['properties']['DISTRICT'] for feature in geojson['features']]
 
-geo_districts = [feature['properties']['NAME_2'] for feature in geojson['features']]
-
-# ==========================
-# DISTRICT MATCHING USING FUZZY MATCH
-# ==========================
+# Fuzzy matching of district names
 matched = {}
 unmatched = []
 
 for district in district_crime['District']:
-    if district in geo_districts:
+    if district in district_names:
         matched[district] = district
     else:
-        # Fuzzy match with threshold 80
-        match, score, _ = process.extractOne(district, geo_districts, scorer=fuzz.token_sort_ratio)
+        match, score, _ = process.extractOne(district, district_names, scorer=fuzz.token_sort_ratio)
         if score >= 80:
             matched[district] = match
         else:
             unmatched.append(district)
 
-print(f"Matched districts: {len(matched)}")
-print(f"Unmatched districts ({len(unmatched)}): {unmatched}")
-
-# Apply matched names
 district_crime['Geo_District'] = district_crime['District'].map(matched)
 
-# Save precomputed scores
-district_crime.to_json(OUTPUT_JSON, orient='records', indent=2)
-
-# ==========================
-# BUILD CHOROPLETH MAP
-# ==========================
-# Compute quantiles for coloring
+# Compute crime scores and quantiles for coloring
 district_crime['Crime_Score'] = district_crime['Crime_Count']
 quantiles = district_crime['Crime_Score'].quantile([0.33, 0.66]).tolist()
 
@@ -82,12 +67,21 @@ def get_color(score):
     else:
         return 'red'
 
+# Save precomputed scores
+district_crime.to_json(OUTPUT_JSON, orient='records', indent=2)
+
+# Streamlit UI
+st.title("India District-Level Crime Heatmap")
+st.markdown("### Interactive Map of Crime Scores by District")
+
+map_style = st.selectbox("Select Map Style", ["Stamen Terrain", "Stamen Toner", "Stamen Watercolor", "CartoDB positron"])
+
 # Initialize map
-m = folium.Map(location=[22.5937, 78.9629], zoom_start=5, tiles='Stamen Terrain')
+m = folium.Map(location=[22.5937, 78.9629], zoom_start=5, tiles=map_style)
 
 # Add choropleth
 for feature in geojson['features']:
-    district_name = feature['properties']['NAME_2']
+    district_name = feature['properties']['DISTRICT']
     crime_row = district_crime[district_crime['Geo_District'] == district_name]
     if not crime_row.empty:
         score = int(crime_row['Crime_Score'])
@@ -102,33 +96,28 @@ for feature in geojson['features']:
             tooltip=folium.Tooltip(f"{district_name}<br>Crime Score: {score}")
         ).add_to(m)
 
-# ==========================
-# OPTIONAL: POINT MARKERS
-# ==========================
+# Add marker clusters
 marker_cluster = MarkerCluster().add_to(m)
-# Example: using centroids from GeoJSON
 for feature in geojson['features']:
-    district_name = feature['properties']['NAME_2']
+    district_name = feature['properties']['DISTRICT']
     crime_row = district_crime[district_crime['Geo_District'] == district_name]
     if not crime_row.empty:
         score = int(crime_row['Crime_Score'])
-        # Compute centroid of polygon
-        geom = feature['geometry']
-        if geom['type'] == 'Polygon':
-            coords = geom['coordinates'][0]
-        elif geom['type'] == 'MultiPolygon':
-            coords = geom['coordinates'][0][0]
-        lon = sum([c[0] for c in coords])/len(coords)
-        lat = sum([c[1] for c in coords])/len(coords)
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=5,
-            color=get_color(score),
-            fill=True,
-            fill_opacity=0.7,
-            popup=f"{district_name}: {score}"
-        ).add_to(marker_cluster)
+        geom = shape(feature['geometry'])
+        if geom.is_valid:
+            lon, lat = geom.centroid.x, geom.centroid.y
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=5,
+                color=get_color(score),
+                fill=True,
+                fill_opacity=0.7,
+                popup=f"{district_name}: {score}"
+            ).add_to(marker_cluster)
 
-# Save map
-m.save("india_crime_map.html")
-print("Map saved to india_crime_map.html")
+# Display map in Streamlit
+st_data = st_folium(m, width=800, height=600)
+
+# Show unmatched districts
+if unmatched:
+    st.warning(f"The following districts could not be matched: {unmatched}")
