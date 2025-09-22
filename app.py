@@ -29,13 +29,134 @@ st.markdown(
     "lets you check safety around a supplied place (address or `lat,lon`)."
 )
 
+# --------------------------- 
+# EMERGENCY CONTACTS DATABASE
 # ---------------------------
+EMERGENCY_CONTACTS = {
+    "National": {
+        "Police": "100",
+        "Fire": "101", 
+        "Ambulance": "102",
+        "Disaster Management": "108",
+        "Women Helpline": "1091",
+        "Child Helpline": "1098",
+        "Senior Citizen Helpline": "14567",
+        "Tourist Helpline": "1363",
+        "Railway Enquiry": "139",
+        "Highway Emergency": "1033"
+    },
+    "State-specific": {
+        "Delhi": {
+            "Delhi Police Control Room": "100",
+            "Delhi Fire Service": "101",
+            "Delhi Ambulance": "102", 
+            "Delhi Women Helpline": "181",
+            "Delhi Traffic Police": "1095",
+            "Delhi Anti Corruption": "1031"
+        },
+        "Mumbai/Maharashtra": {
+            "Mumbai Police": "100",
+            "Mumbai Fire Brigade": "101",
+            "Mumbai Traffic Police": "103",
+            "Maharashtra Police": "100",
+            "Mumbai Ambulance": "102"
+        },
+        "Karnataka/Bangalore": {
+            "Bangalore Police": "100",
+            "Karnataka Police": "100", 
+            "Bangalore Traffic Police": "103",
+            "Bangalore Fire": "101"
+        },
+        "Tamil Nadu/Chennai": {
+            "Chennai Police": "100",
+            "Tamil Nadu Police": "100",
+            "Chennai Traffic Police": "103",
+            "Chennai Fire Service": "101"
+        },
+        "West Bengal/Kolkata": {
+            "Kolkata Police": "100",
+            "West Bengal Police": "100",
+            "Kolkata Traffic Police": "103",
+            "Kolkata Fire Brigade": "101"
+        }
+    },
+    "Specialized Services": {
+        "Cybercrime Helpline": "155260",
+        "Anti-Terrorism Squad": "1090",
+        "Poison Control": "1066",
+        "Blood Bank": "104",
+        "Railway Protection Force": "182",
+        "Coast Guard": "1554",
+        "Anti-Corruption Helpline": "1064",
+        "Consumer Grievance": "1915",
+        "Legal Aid": "15100",
+        "Mental Health": "9152987821"
+    }
+}
+
+def display_emergency_contacts():
+    """Display emergency contacts in an organized manner"""
+    st.sidebar.markdown("---")
+    st.sidebar.header("🚨 Emergency Contacts")
+    
+    # National Emergency Numbers (always visible)
+    with st.sidebar.expander("🇮🇳 National Emergency Numbers", expanded=True):
+        for service, number in EMERGENCY_CONTACTS["National"].items():
+            st.markdown(f"**{service}:** `{number}`")
+    
+    # State-specific numbers
+    with st.sidebar.expander("🏛️ State-Specific Numbers"):
+        state_choice = st.selectbox(
+            "Select State/City:",
+            ["Select..."] + list(EMERGENCY_CONTACTS["State-specific"].keys()),
+            key="state_emergency"
+        )
+        
+        if state_choice != "Select...":
+            for service, number in EMERGENCY_CONTACTS["State-specific"][state_choice].items():
+                st.markdown(f"**{service}:** `{number}`")
+    
+    # Specialized services
+    with st.sidebar.expander("🛡️ Specialized Services"):
+        for service, number in EMERGENCY_CONTACTS["Specialized Services"].items():
+            st.markdown(f"**{service}:** `{number}`")
+    
+    # Quick dial section
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📞 Quick Emergency Dial")
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🚔 Police\n100", key="police_btn"):
+            st.sidebar.success("Dial: 100")
+        if st.button("🔥 Fire\n101", key="fire_btn"):
+            st.sidebar.success("Dial: 101")
+    
+    with col2:
+        if st.button("🚑 Ambulance\n102", key="ambulance_btn"):
+            st.sidebar.success("Dial: 102")
+        if st.button("👩 Women Help\n1091", key="women_btn"):
+            st.sidebar.success("Dial: 1091")
+
+def get_region_specific_contacts(district_name, state_name=None):
+    """Get emergency contacts specific to a region"""
+    contacts = EMERGENCY_CONTACTS["National"].copy()
+    
+    # Try to match with state-specific contacts
+    for state_key, state_contacts in EMERGENCY_CONTACTS["State-specific"].items():
+        if (district_name and any(city in district_name.lower() for city in state_key.lower().split('/'))) or \
+           (state_name and state_name.lower() in state_key.lower()):
+            contacts.update(state_contacts)
+            break
+    
+    return contacts
+
+# --------------------------- 
 # PARAMETERS - Updated working URLs
 # ---------------------------
 DEFAULT_GEOJSON_URLS = [
     "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson",
-    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson"
-    
+    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson" 
 ]
 DATA_FOLDER = "data"
 NEAREST_RADIUS_KM = 5  # radius for nearest POIs
@@ -51,12 +172,10 @@ def normalize_name(s):
     # Handle common variations in Indian district names
     replacements = {
         'commr': 'commissioner',
-        'commissionerate': 'commissioner',
-        
+        'commissionerate': 'commissioner', 
         'dist': 'district',
         'north': 'n',
-        'south': 's',
-        
+        'south': 's', 
         'east': 'e',
         'west': 'w',
         'parganas': 'pargana',
@@ -153,6 +272,9 @@ if crime_agg.empty:
         st.write(failed_reads[:5])
     st.stop()
 st.success(f"Loaded and aggregated {len(csv_files)} CSV(s) from `{DATA_FOLDER}`; found {len(crime_agg)} distinct normalized districts.")
+
+# Display emergency contacts in sidebar
+display_emergency_contacts()
 
 st.sidebar.header("Data & GeoJSON options")
 st.sidebar.write(f"Detected {len(csv_files)} CSV files in `{DATA_FOLDER}`.")
@@ -277,8 +399,7 @@ if missing > 0.5 * total:
             st.write(f"'{orig}' → '{norm}'")
     
     with col2:
-        st.write("**Sample CSV districts:**")
-        
+        st.write("**Sample CSV districts:**") 
         for orig, norm in zip(csv_sample, csv_norm):
             st.write(f"'{orig}' → '{norm}'")
     
@@ -336,7 +457,7 @@ with col1:
     show_pois = st.checkbox("Show Police Stations", value=True)
 with col2:
     danger_threshold = st.slider("Danger Zone Threshold", 0.1, 1.0, 0.7, 0.1,
-                                 help="Adjust what constitutes a 'danger zone'")
+                                help="Adjust what constitutes a 'danger zone'")
 
 # Create main map
 m = folium.Map(
@@ -421,14 +542,24 @@ def create_tooltip_html(row):
 # Add district polygons with enhanced styling
 district_layer = folium.FeatureGroup(name="🏛️ Districts")
 for _, row in merged.iterrows():
-    # Create popup with detailed information
+    # Create popup with detailed information including emergency contacts
+    region_contacts = get_region_specific_contacts(row[name_col])
+    emergency_info = ""
+    for service, number in list(region_contacts.items())[:3]:  # Show first 3 emergency numbers
+        emergency_info += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
+    
     popup_html = f"""
-    <div style="font-family: Arial; max-width: 250px;">
+    <div style="font-family: Arial; max-width: 300px;">
         <h4 style="margin: 0 0 10px 0; color: #2c3e50;">{row[name_col]}</h4>
-        <table style="width: 100%; font-size: 12px;">
+        <table style="width: 100%; font-size: 12px; margin-bottom: 10px;">
             <tr><td><b>Safety Level:</b></td><td>{row['safety_level']}</td></tr>
             <tr><td><b>Crime Count:</b></td><td>{int(row['crime_total']):,}</td></tr>
             <tr><td><b>Risk Category:</b></td><td>{'High Risk' if row['crime_total'] > (merged['crime_total'].max() * danger_threshold) else 'Moderate/Low Risk'}</td></tr>
+        </table>
+        <hr style="margin: 10px 0;">
+        <h5 style="margin: 5px 0; color: #e74c3c;">🚨 Emergency Contacts:</h5>
+        <table style="width: 100%; font-size: 11px;">
+            {emergency_info}
         </table>
         <hr style="margin: 10px 0;">
         <small style="color: #7f8c8d;">Based on aggregated crime data from multiple sources</small>
@@ -438,7 +569,7 @@ for _, row in merged.iterrows():
     folium.GeoJson(
         row.geometry.__geo_interface__,
         style_function=lambda x, row=row: style_function({'properties': row}),
-        popup=folium.Popup(popup_html, max_width=300),
+        popup=folium.Popup(popup_html, max_width=350),
         tooltip=create_tooltip_html(row)
     ).add_to(district_layer)
 
@@ -496,8 +627,8 @@ legend_html = f"""
      bottom: 50px; left: 50px; width: 200px; height: 180px; 
      background-color: white; border:2px solid grey; z-index:9999; 
      font-size:12px; padding: 10px; box-shadow: 0 0 15px rgba(0,0,0,0.2);
-    border-radius: 5px;">
-      
+     border-radius: 5px;">
+  
 <h4 style="margin: 0 0 10px 0; text-align: center;">🛡️ Safety Legend</h4>
 <p style="margin: 5px 0;"><span style="color: #6bcf7f;">🟢</span> <b>Low Risk</b> - Safe areas</p>
 <p style="margin: 5px 0;"><span style="color: #ffd93d;">🟡</span> <b>Medium Risk</b> - Moderate caution</p>
@@ -632,6 +763,44 @@ if loc_input:
                 else:
                     color = "🟢" if safety == "Low" else ("🟡" if safety == "Medium" else "🔴")
                     st.success(f"You are in/near **{district_name}** — Safety Level: **{safety}** {color} (crime count: {crime_count})")
+                
+                # Display location-specific emergency contacts
+                st.subheader("📞 Emergency Contacts for Your Area")
+                region_contacts = get_region_specific_contacts(district_name)
+                
+                # Create emergency contact cards
+                emergency_cols = st.columns(3)
+                contact_items = list(region_contacts.items())
+                
+                for i, (service, number) in enumerate(contact_items[:9]):  # Show up to 9 contacts
+                    with emergency_cols[i % 3]:
+                        st.markdown(f"""
+                        <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; border-left: 4px solid #dc3545; margin-bottom: 10px;">
+                            <h6 style="margin: 0; color: #dc3545;">{service}</h6>
+                            <h4 style="margin: 5px 0 0 0; color: #212529;">{number}</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Quick dial buttons for essential services
+                st.markdown("### 🚨 Quick Emergency Actions")
+                emergency_actions = st.columns(4)
+                
+                with emergency_actions[0]:
+                    if st.button("🚔 Call Police (100)", type="primary", key="quick_police"):
+                        st.success("Emergency Number: 100\n\nDial immediately for police assistance")
+                
+                with emergency_actions[1]:
+                    if st.button("🚑 Call Ambulance (102)", type="secondary", key="quick_ambulance"):
+                        st.success("Emergency Number: 102\n\nDial for medical emergency")
+                
+                with emergency_actions[2]:
+                    if st.button("🔥 Fire Service (101)", type="secondary", key="quick_fire"):
+                        st.success("Emergency Number: 101\n\nDial for fire emergency")
+                
+                with emergency_actions[3]:
+                    if st.button("👩 Women Helpline (1091)", type="secondary", key="quick_women"):
+                        st.success("Emergency Number: 1091\n\nDial for women's safety assistance")
+                        
             except Exception:
                 st.info("Could not map to a district polygon; showing nearest districts.")
 
@@ -701,14 +870,24 @@ if loc_input:
                         color = "#6bcf7f"
                         border_color = "#51b364"
                     
-                    # Enhanced popup for districts
+                    # Enhanced popup for districts with emergency contacts
+                    district_contacts = get_region_specific_contacts(district_name)
+                    emergency_list = ""
+                    for service, number in list(district_contacts.items())[:5]:
+                        emergency_list += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
+                    
                     popup_html = f"""
-                    <div style="font-family: Arial; max-width: 220px;">
+                    <div style="font-family: Arial; max-width: 280px;">
                         <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{district_name}</h4>
-                        <table style="width: 100%; font-size: 11px;">
+                        <table style="width: 100%; font-size: 11px; margin-bottom: 10px;">
                             <tr><td><b>Safety Level:</b></td><td>{lvl}</td></tr>
                             <tr><td><b>Crime Count:</b></td><td>{crime_count:,}</td></tr>
                             <tr><td><b>Distance:</b></td><td>{row['dist_km']:.1f} km</td></tr>
+                        </table>
+                        <hr style="margin: 8px 0;">
+                        <h6 style="margin: 5px 0; color: #e74c3c;">Emergency Contacts:</h6>
+                        <table style="width: 100%; font-size: 10px;">
+                            {emergency_list}
                         </table>
                     </div>
                     """
@@ -722,7 +901,7 @@ if loc_input:
                             'fillOpacity': 0.6,
                             'opacity': 1
                         },
-                        popup=folium.Popup(popup_html, max_width=250),
+                        popup=folium.Popup(popup_html, max_width=300),
                         tooltip=f"{district_name} - {lvl}"
                     ).add_to(m_local)
                 except Exception:
@@ -735,7 +914,7 @@ if loc_input:
                 color="blue", 
                 fill=True, 
                 fill_opacity=0.9, 
-                popup=folium.Popup(f"<b>📍 Your Location</b><br>{lat:.5f}, {lon:.5f}", max_width=200),
+                popup=folium.Popup(f"<b>📍 Your Location</b><br>{lat:.5f}, {lon:.5f}<br><hr><b>Emergency: 100 (Police)</b>", max_width=200),
                 tooltip="📍 You are here"
             ).add_to(m_local)
             
@@ -802,9 +981,9 @@ if loc_input:
                 
                 poi_categories[category]['count'] += 1
                 
-                # Create detailed popup
+                # Create detailed popup with emergency info
                 popup_html = f"""
-                <div style="font-family: Arial; max-width: 200px;">
+                <div style="font-family: Arial; max-width: 250px;">
                     <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{name}</h4>
                     <hr style="margin: 5px 0;">
                     <b>Type:</b> {category.title()}<br>
@@ -812,13 +991,16 @@ if loc_input:
                     <b>Coordinates:</b> {el_lat:.4f}, {el_lon:.4f}<br>
                     {f"<b>Phone:</b> {tags.get('phone', 'N/A')}<br>" if tags.get('phone') else ''}
                     <hr style="margin: 5px 0;">
+                    <b>Emergency Numbers:</b><br>
+                    Police: <b>100</b> | Fire: <b>101</b> | Medical: <b>102</b>
+                    <hr style="margin: 5px 0;">
                     <small style="color: #7f8c8d;">Source: OpenStreetMap</small>
                 </div>
                 """
                 
                 folium.Marker(
                     location=[el_lat, el_lon],
-                    popup=folium.Popup(popup_html, max_width=220),
+                    popup=folium.Popup(popup_html, max_width=270),
                     tooltip=f"{icon_config['color'].title()} {category.title()}: {name}",
                     icon=folium.Icon(
                         color=icon_config['color'], 
@@ -866,14 +1048,44 @@ if loc_input:
                         continue
                     name = tags.get('name', 'Police Station')
                     distance = geodesic((lat, lon), (latp, lonp)).km
-                    nearest_police.append((name, distance))
+                    phone = tags.get('phone', 'Call 100')
+                    nearest_police.append((name, distance, phone))
 
             if nearest_police:
                 nearest_police.sort(key=lambda x: x[1])
-                for name, dist in nearest_police[:10]:  # show top 10 closest
-                    st.write(f"• {name} — {dist:.2f} km away")
+                for name, dist, phone in nearest_police[:10]:  # show top 10 closest
+                    st.write(f"• **{name}** — {dist:.2f} km away | Contact: {phone}")
             else:
                 st.write("No nearby police stations found in the area.")
+                st.info("In emergency, dial **100** for police assistance anywhere in India.")
+
+# Add emergency preparedness tips
+st.markdown("---")
+st.subheader("🛡️ Safety & Emergency Preparedness Tips")
+
+safety_cols = st.columns(2)
+
+with safety_cols[0]:
+    st.markdown("""
+    **🚨 In Case of Emergency:**
+    - **Police Emergency:** Dial **100**
+    - **Medical Emergency:** Dial **102** 
+    - **Fire Emergency:** Dial **101**
+    - Stay calm and provide clear location details
+    - Keep important contacts saved in your phone
+    - Share your location with trusted contacts
+    """)
+
+with safety_cols[1]:
+    st.markdown("""
+    **🛡️ Safety Best Practices:**
+    - Be aware of your surroundings
+    - Avoid isolated areas, especially at night
+    - Keep emergency contacts easily accessible
+    - Inform someone about your travel plans
+    - Trust your instincts if something feels wrong
+    - Use well-lit, populated routes
+    """)
 
 st.markdown("---")
 st.markdown(
@@ -881,5 +1093,7 @@ st.markdown(
     "1. District-name mismatches are common between CSVs and GeoJSON files. If many districts show zero, check name variations.\n"
     "2. Overpass/Nominatim are free public services and may rate-limit or be slow.\n"
     "3. For production use, consider paid geocoding/mapping services.\n"
-    "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset."
-            )
+    "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset.\n"
+    "5. Emergency numbers are for India. Always verify local emergency contacts.\n"
+    "6. In case of immediate danger, prioritize your safety and call emergency services."
+        )
