@@ -472,21 +472,112 @@ for _, row in merged.iterrows():
 
 district_layer.add_to(m)
 
-# Simplified police stations (fewer for speed)
+# Enhanced police stations with district crime data
 if show_pois:
     police_layer = folium.FeatureGroup(name="Police")
     key_stations = [
-        {"name": "Delhi Police HQ", "lat": 28.6289, "lon": 77.2065},
-        {"name": "Mumbai Police", "lat": 18.9220, "lon": 72.8347},
-        {"name": "Bangalore Police", "lat": 12.9716, "lon": 77.5946},
+        {"name": "Delhi Police HQ", "lat": 28.6289, "lon": 77.2065, "city": "Delhi"},
+        {"name": "Mumbai Police Commissioner", "lat": 18.9220, "lon": 72.8347, "city": "Mumbai"},
+        {"name": "Bangalore City Police", "lat": 12.9716, "lon": 77.5946, "city": "Bangalore"},
+        {"name": "Chennai Police Station", "lat": 13.0827, "lon": 80.2707, "city": "Chennai"},
+        {"name": "Kolkata Police HQ", "lat": 22.5726, "lon": 88.3639, "city": "Kolkata"},
     ]
     
     for station in key_stations:
+        # Find the district this police station is located in
+        station_point = Point(station['lon'], station['lat'])
+        containing_district = merged[merged.geometry.contains(station_point)]
+        
+        if len(containing_district) > 0:
+            district_row = containing_district.iloc[0]
+            district_name = district_row[name_col]
+            safety_level = district_row['safety_level']
+            crime_count = int(district_row['crime_total'])
+            
+            # Get emergency contacts for this district
+            region_contacts = get_region_specific_contacts(district_name)
+            emergency_info = ""
+            for service, number in list(region_contacts.items())[:4]:
+                emergency_info += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
+            
+            # Determine danger status
+            is_danger = crime_count > danger_cutoff if danger_cutoff > 0 else False
+            danger_text = "🚨 HIGH ALERT AREA" if is_danger else ""
+            
+            # Safety color coding
+            safety_colors = {"Low": "#28a745", "Medium": "#ffc107", "High": "#dc3545", "No Data": "#6c757d"}
+            safety_color = safety_colors.get(safety_level, "#6c757d")
+            
+            popup_html = f"""
+            <div style="font-family: Arial; max-width: 300px;">
+                <h4 style="margin: 0 0 8px 0; color: #2c3e50;">🚔 {station['name']}</h4>
+                <hr style="margin: 5px 0;">
+                
+                <h5 style="margin: 5px 0; color: {safety_color};">District: {district_name}</h5>
+                <table style="width: 100%; font-size: 12px; margin-bottom: 10px;">
+                    <tr><td><b>Safety Level:</b></td><td style="color: {safety_color};"><b>{safety_level}</b></td></tr>
+                    <tr><td><b>Crime Count:</b></td><td><b>{crime_count:,}</b></td></tr>
+                    <tr><td><b>Risk Status:</b></td><td>{'High Risk Zone' if is_danger else 'Moderate/Low Risk'}</td></tr>
+                </table>
+                
+                {f'<div style="background: #ffebee; border: 1px solid #f44336; padding: 5px; border-radius: 3px; margin: 5px 0;"><b style="color: #d32f2f;">{danger_text}</b></div>' if is_danger else ''}
+                
+                <hr style="margin: 8px 0;">
+                <h6 style="margin: 5px 0; color: #e74c3c;">📞 Emergency Contacts:</h6>
+                <table style="width: 100%; font-size: 11px;">
+                    {emergency_info}
+                </table>
+                
+                <hr style="margin: 8px 0;">
+                <p style="margin: 5px 0; font-size: 10px; color: #666;">
+                    <b>Location:</b> {station['lat']:.4f}, {station['lon']:.4f}<br>
+                    <b>Coverage Area:</b> {station['city']} and surrounding areas
+                </p>
+            </div>
+            """
+            
+            # Color code the police station marker based on district safety
+            marker_color = 'red' if safety_level == 'High' or is_danger else ('orange' if safety_level == 'Medium' else 'green')
+            
+            tooltip_text = f"🚔 {station['name']} - {district_name} ({safety_level})"
+            if is_danger:
+                tooltip_text += " ⚠️ HIGH RISK"
+                
+        else:
+            # Fallback for stations not in any district
+            popup_html = f"""
+            <div style="font-family: Arial; max-width: 250px;">
+                <h4 style="margin: 0; color: #2c3e50;">🚔 {station['name']}</h4>
+                <hr style="margin: 5px 0;">
+                <p><b>Location:</b> {station['city']}<br>
+                <b>Coordinates:</b> {station['lat']:.4f}, {station['lon']:.4f}</p>
+                
+                <hr style="margin: 8px 0;">
+                <h6 style="color: #e74c3c;">📞 Emergency Numbers:</h6>
+                <p style="font-size: 12px;">
+                Police: <b>100</b><br>
+                Fire: <b>101</b><br>
+                Medical: <b>102</b><br>
+                Women Help: <b>1091</b>
+                </p>
+                
+                <p style="font-size: 10px; color: #666;">
+                District crime data not available for this location
+                </p>
+            </div>
+            """
+            marker_color = 'blue'  # Default color
+            tooltip_text = f"🚔 {station['name']} - {station['city']}"
+        
         folium.Marker(
             [station['lat'], station['lon']],
-            popup=f"🚔 {station['name']}<br>Emergency: 100",
-            tooltip=station['name'],
-            icon=folium.Icon(color='red', icon='info-sign')
+            popup=folium.Popup(popup_html, max_width=320),
+            tooltip=tooltip_text,
+            icon=folium.Icon(
+                color=marker_color, 
+                icon='shield-alt' if marker_color == 'red' else 'info-sign',
+                prefix='fa'
+            )
         ).add_to(police_layer)
     
     police_layer.add_to(m)
