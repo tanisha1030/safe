@@ -319,19 +319,20 @@ folium.TileLayer('OpenStreetMap', name='Street Map').add_to(main_map)
 folium.TileLayer('CartoDB positron', name='Light Map').add_to(main_map)
 folium.TileLayer('CartoDB dark_matter', name='Dark Map').add_to(main_map)
 
-# Style function for districts
-def style_function(feature):
-    safety_level = feature['properties'].get('safety_level', 'No Data')
-    color = get_color_for_safety(safety_level)
-    return {
-        'fillColor': color,
-        'color': 'black',
-        'weight': 0.5,
-        'fillOpacity': 0.7,
-    }
-
 # Add districts to map
 for _, row in merged_data.iterrows():
+    # Get color for this specific row
+    color = get_color_for_safety(row['safety_level'])
+    
+    # Create style function for this specific feature
+    def create_style_function(fill_color):
+        return lambda feature: {
+            'fillColor': fill_color,
+            'color': 'black',
+            'weight': 0.5,
+            'fillOpacity': 0.7,
+        }
+    
     # Create popup content
     popup_html = f"""
     <div style="font-family: Arial; max-width: 200px;">
@@ -343,7 +344,7 @@ for _, row in merged_data.iterrows():
     
     folium.GeoJson(
         row.geometry.__geo_interface__,
-        style_function=style_function,
+        style_function=create_style_function(color),
         popup=folium.Popup(popup_html, max_width=250),
         tooltip=f"{row[district_name_col]} - {row['safety_level']}"
     ).add_to(main_map)
@@ -718,4 +719,4 @@ st.markdown(
     - District matching depends on name consistency between CSV files and GeoJSON
     - For production use, consider using authenticated geocoding services
     """
-                )
+)
