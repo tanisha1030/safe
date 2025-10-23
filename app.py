@@ -216,7 +216,6 @@ if num_missing > 0:
     low_crime_threshold = np.percentile(actual_crimes, 10)
     
     # Generate unique synthetic data: random WHOLE numbers between 1 and low_crime_threshold
-    # Use current state for randomness to avoid repetition
     min_val = 50
     max_val = int(max(500, low_crime_threshold * 0.5))
     
@@ -660,6 +659,12 @@ if search_button and location_input:
         lambda c: geodesic((c.y, c.x), (lat, lon)).km
     )
     nearby = merged_nearby[merged_nearby['dist_km'] <= 20].copy()
+    
+    # Ensure CRS is set to WGS84 (EPSG:4326) for folium compatibility
+    if nearby.crs is None:
+        nearby.set_crs("EPSG:4326", inplace=True)
+    elif nearby.crs.to_string() != "EPSG:4326":
+        nearby = nearby.to_crs("EPSG:4326")
     
     def style_nearby(feature):
         safety = feature['properties'].get('safety_level', 'Low')
