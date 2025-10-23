@@ -147,12 +147,10 @@ def load_geojson():
     
     for idx, url in enumerate(GEOJSON_URLS):
         try:
-            st.info(f"Trying GeoJSON source {idx + 1}/{len(GEOJSON_URLS)}...")
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             gj = response.json()
             gdf = gpd.GeoDataFrame.from_features(gj['features'])
-            st.success(f"✅ Loaded GeoJSON from source {idx + 1}")
             return gdf
         except Exception as e:
             errors.append(f"Source {idx + 1}: {str(e)}")
@@ -174,7 +172,7 @@ def load_geojson():
         try:
             gj = json.load(uploaded_file)
             gdf = gpd.GeoDataFrame.from_features(gj['features'])
-            st.success("✅ Loaded uploaded GeoJSON successfully!")
+            st.success("✅ Loaded map boundaries successfully!")
             return gdf
         except Exception as e:
             st.error(f"Failed to load uploaded file: {str(e)}")
@@ -232,8 +230,6 @@ if num_missing > 0:
     merged.loc[districts_without_data, 'crime_count'] = synthetic_values
     merged.loc[districts_without_data, 'synthetic'] = True
     merged['synthetic'] = merged['synthetic'].fillna(False)
-    
-    st.info(f"ℹ️ Generated synthetic low crime data for {num_missing} districts without data")
 
 # Ensure no zero or NaN values and convert all to integers
 merged['crime_count'] = merged['crime_count'].fillna(1)
@@ -257,21 +253,47 @@ merged['safety_level'] = merged['crime_count'].apply(classify_safety)
 # Show matching stats
 real_data = (~merged.get('synthetic', False)).sum()
 synthetic_data = merged.get('synthetic', False).sum()
-st.info(f"📊 Real data: {real_data} districts | Synthetic data: {synthetic_data} districts")
 
 # ---------------------------
 # MAIN MAP - ALL DISTRICTS COLORED
 # ---------------------------
 st.subheader("🗺️ National Crime Heatmap")
 
-def create_main_map(merged_json, name_col):
-    """Create optimized choropleth map"""
+# Map view selector
+map_view = st.radio(
+    "Select Map View:",
+    ["Street Map", "Dark Mode", "Satellite"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+def create_main_map(merged_json, name_col, view_type="Street Map"):
+    """Create optimized choropleth map with different tile options"""
+    
+    # Define tile layers based on view type
+    if view_type == "Dark Mode":
+        tiles = "CartoDB dark_matter"
+    elif view_type == "Satellite":
+        tiles = None  # We'll add custom satellite tiles
+    else:
+        tiles = "OpenStreetMap"
+    
     m = folium.Map(
         location=[20.5937, 78.9629],
         zoom_start=5,
-        tiles="OpenStreetMap",
+        tiles=tiles,
         prefer_canvas=True
     )
+    
+    # Add satellite imagery if selected
+    if view_type == "Satellite":
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri',
+            name='Esri Satellite',
+            overlay=False,
+            control=True
+        ).add_to(m)
     
     def style_function(feature):
         safety = feature['properties'].get('safety_level', 'Low')
@@ -323,7 +345,7 @@ def create_main_map(merged_json, name_col):
 # Create and display main map
 with st.spinner("Rendering map..."):
     merged_json = json.loads(merged.to_json())
-    main_map = create_main_map(merged_json, name_col)
+    main_map = create_main_map(merged_json, name_col, map_view)
     st_folium(main_map, width=1200, height=600, returned_objects=[])
 
 # Show district data summary
@@ -334,9 +356,13 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Total Districts", len(merged))
-    st.metric("Low Risk Districts", (merged['safety_level'] == 'Low').sum())
-    st.metric("Medium Risk Districts", (merged['safety_level'] == 'Medium').sum())
-    st.metric("High Risk Districts", (merged['safety_level'] == 'High').sum())
+    low_count = (merged['safety_level'] == 'Low').sum()
+    medium_count = (merged['safety_level'] == 'Medium').sum()
+    high_count = (merged['safety_level'] == 'High').sum()
+    
+    st.metric("Low Risk Districts", low_count)
+    st.metric("Medium Risk Districts", medium_count)
+    st.metric("High Risk Districts", high_count)
 
 with col2:
     st.write("**Top 5 Highest Crime Districts:**")
@@ -432,11 +458,37 @@ if search_button and location_input:
     
     st.subheader("📍 Local Area Map")
     
+    # Map view selector for local map
+    local_map_view = st.radio(
+        "Select Local Map View:",
+        ["Street Map", "Dark Mode", "Satellite"],
+        horizontal=True,
+        key="local_map_view"
+    )
+    
+    # Define tile layers
+    if local_map_view == "Dark Mode":
+        tiles = "CartoDB dark_matter"
+    elif local_map_view == "Satellite":
+        tiles = None
+    else:
+        tiles = "OpenStreetMap"
+    
     local_map = folium.Map(
         location=[lat, lon],
         zoom_start=12,
-        tiles="OpenStreetMap"
+        tiles=tiles
     )
+    
+    # Add satellite imagery if selected
+    if local_map_view == "Satellite":
+        folium.TileLayer(
+            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attr='Esri',
+            name='Esri Satellite',
+            overlay=False,
+            control=True
+        ).add_to(local_map)
     
     folium.Marker(
         location=[lat, lon],
