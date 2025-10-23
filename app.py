@@ -540,21 +540,212 @@ if calc_distance and district1 and district2:
         st_folium(dist_map, width=1200, height=500, returned_objects=[])
 
 # ---------------------------
-# LOCATION SEARCH - OPTIMIZED
+# POLICE STATION DATA
+# ---------------------------
+# Sample police station data - can be extended with real data from data.gov.in or other sources
+POLICE_STATIONS = {
+    "Bangalore Urban": [
+        {"name": "Cubbon Park Police Station", "address": "Kumara Krupa Rd, Bengaluru - 560001", "phone": "080-22942222"},
+        {"name": "Koramangala Police Station", "address": "80 Feet Rd, Koramangala, Bengaluru - 560095", "phone": "080-25533506"},
+        {"name": "Whitefield Police Station", "address": "Whitefield Main Rd, Bengaluru - 560066", "phone": "080-28452522"},
+    ],
+    "Mumbai": [
+        {"name": "Colaba Police Station", "address": "Arthur Bunder Rd, Colaba, Mumbai - 400005", "phone": "022-22020111"},
+        {"name": "Bandra Police Station", "address": "Bandra West, Mumbai - 400050", "phone": "022-26422222"},
+        {"name": "Andheri Police Station", "address": "Andheri West, Mumbai - 400058", "phone": "022-26392222"},
+    ],
+    "New Delhi": [
+        {"name": "Connaught Place Police Station", "address": "Parliament Street, New Delhi - 110001", "phone": "011-23742740"},
+        {"name": "Saket Police Station", "address": "Saket District Centre, New Delhi - 110017", "phone": "011-26854930"},
+        {"name": "Vasant Vihar Police Station", "address": "Vasant Vihar, New Delhi - 110057", "phone": "011-26142450"},
+    ],
+    "Kolkata": [
+        {"name": "Park Street Police Station", "address": "Park Street, Kolkata - 700016", "phone": "033-22297750"},
+        {"name": "New Market Police Station", "address": "Lindsay Street, Kolkata - 700087", "phone": "033-22487524"},
+        {"name": "Alipore Police Station", "address": "Alipore Rd, Kolkata - 700027", "phone": "033-24791010"},
+    ],
+    "Chennai": [
+        {"name": "Egmore Police Station", "address": "Gandhi Irwin Rd, Egmore, Chennai - 600008", "phone": "044-28190400"},
+        {"name": "T Nagar Police Station", "address": "South Usman Rd, T Nagar, Chennai - 600017", "phone": "044-24345155"},
+        {"name": "Mylapore Police Station", "address": "Luz Church Rd, Mylapore, Chennai - 600004", "phone": "044-24981234"},
+    ],
+    # Add default for districts without specific data
+    "_default": [
+        {"name": "District Police Station", "address": "Contact local authorities for exact location", "phone": "100 (Emergency)"},
+    ]
+}
+
+def get_police_stations(district_name):
+    """Get police stations for a district, with fallback to default"""
+    # Try exact match
+    if district_name in POLICE_STATIONS:
+        return POLICE_STATIONS[district_name]
+    
+    # Try partial match
+    for key in POLICE_STATIONS.keys():
+        if key.lower() in district_name.lower() or district_name.lower() in key.lower():
+            return POLICE_STATIONS[key]
+    
+    # Return default
+    return POLICE_STATIONS["_default"]
+
+# ---------------------------
+# LOCATION SEARCH - WITH DROPDOWN
 # ---------------------------
 st.markdown("---")
 st.subheader("🔍 Search Location Safety")
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    location_input = st.text_input(
-        "Enter location (address or lat,lon):",
-        placeholder="e.g., Bangalore or 12.9716,77.5946"
-    )
-with col2:
-    search_button = st.button("🔍 Search", type="primary")
+# Create tabs for different search methods
+search_tab1, search_tab2 = st.tabs(["Select District", "Enter Location"])
 
-if search_button and location_input:
+with search_tab1:
+    st.write("**Select a district to view safety information and nearby police stations:**")
+    
+    selected_district = st.selectbox(
+        "Choose District:",
+        options=sorted(merged[name_col].unique()),
+        key="district_selector"
+    )
+    
+    search_by_dropdown = st.button("🔍 View District Info", type="primary", key="dropdown_search")
+    
+    if search_by_dropdown and selected_district:
+        # Get district data
+        district_row = merged[merged[name_col] == selected_district].iloc[0]
+        
+        # Get centroid for location
+        centroid = district_row.geometry.centroid
+        lat, lon = centroid.y, centroid.x
+        
+        st.success(f"📍 District Center: {lat:.4f}, {lon:.4f}")
+        
+        # Display district info
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("District", selected_district)
+        with col2:
+            safety = district_row['safety_level']
+            color = {'Low': '🟢', 'Medium': '🟡', 'High': '🔴'}
+            st.metric("Safety Level", f"{safety} {color.get(safety, '🟢')}")
+        with col3:
+            st.metric("Crime Count", int(district_row['crime_count']))
+        
+        # Police Station Information
+        st.markdown("---")
+        st.subheader("🚔 Nearby Police Stations")
+        
+        police_stations = get_police_stations(selected_district)
+        
+        for idx, station in enumerate(police_stations, 1):
+            with st.expander(f"**{idx}. {station['name']}**", expanded=(idx == 1)):
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.write(f"📍 **Address:** {station['address']}")
+                    st.write(f"📞 **Phone:** {station['phone']}")
+                with col2:
+                    st.write("**Quick Actions:**")
+                    st.write("☎️ Emergency: 100")
+                    st.write("🚑 Ambulance: 102")
+                    st.write("🚒 Fire: 101")
+        
+        # Map visualization
+        st.subheader("📍 District Location Map")
+        
+        district_map_view = st.radio(
+            "Select Map View:",
+            ["Street Map", "Dark Mode", "Satellite"],
+            horizontal=True,
+            key="district_map_view"
+        )
+        
+        # Define tile layers
+        if district_map_view == "Dark Mode":
+            tiles = "CartoDB dark_matter"
+        elif district_map_view == "Satellite":
+            tiles = None
+        else:
+            tiles = "OpenStreetMap"
+        
+        district_map = folium.Map(
+            location=[lat, lon],
+            zoom_start=11,
+            tiles=tiles
+        )
+        
+        # Add satellite imagery if selected
+        if district_map_view == "Satellite":
+            folium.TileLayer(
+                tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                attr='Esri',
+                name='Esri Satellite',
+                overlay=False,
+                control=True
+            ).add_to(district_map)
+        
+        # Add fullscreen button
+        Fullscreen(
+            position='topright',
+            title='Enter fullscreen',
+            title_cancel='Exit fullscreen',
+            force_separate_button=True
+        ).add_to(district_map)
+        
+        # Add district boundary
+        def style_district(feature):
+            safety = feature['properties'].get('safety_level', 'Low')
+            colors = {'Low': '#4caf50', 'Medium': '#ffc107', 'High': '#f44336'}
+            return {
+                'fillColor': colors.get(safety, '#4caf50'),
+                'color': '#ffffff',
+                'weight': 2,
+                'fillOpacity': 0.5
+            }
+        
+        district_geojson = merged[merged[name_col] == selected_district].copy()
+        if district_geojson.crs is None:
+            district_geojson.set_crs("EPSG:4326", inplace=True)
+        elif district_geojson.crs.to_string() != "EPSG:4326":
+            district_geojson = district_geojson.to_crs("EPSG:4326")
+        
+        folium.GeoJson(
+            district_geojson,
+            style_function=style_district,
+            tooltip=folium.GeoJsonTooltip(
+                fields=[name_col, 'crime_count', 'safety_level'],
+                aliases=['District:', 'Crime Count:', 'Safety:'],
+                localize=True
+            )
+        ).add_to(district_map)
+        
+        # Add marker for district center
+        folium.Marker(
+            location=[lat, lon],
+            popup=f"<b>{selected_district}</b><br>Crime: {int(district_row['crime_count']):,}<br>Safety: {district_row['safety_level']}",
+            tooltip=f"{selected_district} Center",
+            icon=folium.Icon(color='blue', icon='info-sign', prefix='glyphicon')
+        ).add_to(district_map)
+        
+        st_folium(district_map, width=1000, height=500, returned_objects=[])
+        
+        st.info("💡 **Tip:** For emergencies, always call 100 for police assistance")
+
+with search_tab2:
+    st.write("**Enter coordinates or address to find safety information:**")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        location_input = st.text_input(
+            "Enter location (lat,lon format only):",
+            placeholder="e.g., 12.9716,77.5946",
+            help="Use lat,lon format. Address geocoding disabled due to API timeout."
+        )
+    with col2:
+        st.write("")
+        st.write("")
+        search_button = st.button("🔍 Search", type="primary", key="coord_search")
+
+    if search_button and location_input:
     geolocator = Nominatim(user_agent="crime-map", timeout=10)
     
     lat, lon = None, None
