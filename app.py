@@ -18,7 +18,12 @@ st.title("🗺️ India Crime Heatmap - District Level Analysis")
 # CONFIGURATION
 # ---------------------------
 DATA_FOLDER = "data"
-GEOJSON_URL = "https://raw.githubusercontent.com/Subhash9325/GeoJson-Data-of-Indian-States/master/Indian_Districts.json"
+# Multiple GeoJSON sources as fallbacks
+GEOJSON_URLS = [
+    "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson",
+    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson",
+    "https://raw.githubusercontent.com/datameet/maps/master/Districts/India_Districts.geojson"
+]
 
 # --------------------------- 
 # IMPROVED DISTRICT NAME NORMALIZATION
@@ -138,20 +143,49 @@ if crime_agg.empty:
 st.success(f"✅ Loaded {len(csv_files)} CSV files, found {len(crime_agg)} districts")
 
 # --------------------------- 
-# LOAD GEOJSON - OPTIMIZED
+# LOAD GEOJSON - OPTIMIZED WITH FALLBACKS
 # ---------------------------
 @st.cache_data(show_spinner=False)
 def load_geojson():
-    """Load GeoJSON with caching"""
-    try:
-        response = requests.get(GEOJSON_URL, timeout=30)
-        response.raise_for_status()
-        gj = response.json()
-        gdf = gpd.GeoDataFrame.from_features(gj['features'])
-        return gdf
-    except Exception as e:
-        st.error(f"Failed to load GeoJSON: {str(e)}")
-        st.stop()
+    """Load GeoJSON with multiple fallback sources"""
+    errors = []
+    
+    for idx, url in enumerate(GEOJSON_URLS):
+        try:
+            st.info(f"Trying GeoJSON source {idx + 1}/{len(GEOJSON_URLS)}...")
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            gj = response.json()
+            gdf = gpd.GeoDataFrame.from_features(gj['features'])
+            st.success(f"✅ Loaded GeoJSON from source {idx + 1}")
+            return gdf
+        except Exception as e:
+            errors.append(f"Source {idx + 1}: {str(e)}")
+            continue
+    
+    # If all sources fail, show error with upload option
+    st.error("❌ All GeoJSON sources failed. Please upload a file manually.")
+    st.write("**Attempted sources and errors:**")
+    for error in errors:
+        st.write(f"- {error}")
+    
+    st.write("\n**Upload your own GeoJSON:**")
+    uploaded_file = st.file_uploader(
+        "Upload India Districts GeoJSON",
+        type=["json", "geojson"],
+        help="Download from: https://github.com/geohacker/india/blob/master/district/india_district.geojson"
+    )
+    
+    if uploaded_file:
+        try:
+            gj = json.load(uploaded_file)
+            gdf = gpd.GeoDataFrame.from_features(gj['features'])
+            st.success("✅ Loaded uploaded GeoJSON successfully!")
+            return gdf
+        except Exception as e:
+            st.error(f"Failed to load uploaded file: {str(e)}")
+    
+    st.stop()
 
 with st.spinner("Loading map boundaries..."):
     gdf_districts = load_geojson()
