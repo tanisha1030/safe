@@ -243,8 +243,7 @@ st.info(f"📊 Matched {matched}/{len(merged)} districts with crime data")
 # ---------------------------
 st.subheader("🗺️ National Crime Heatmap")
 
-@st.cache_data(show_spinner=False)
-def create_main_map(merged_df, name_col):
+def create_main_map(merged_json, name_col):
     """Create optimized choropleth map"""
     m = folium.Map(
         location=[20.5937, 78.9629],
@@ -271,7 +270,7 @@ def create_main_map(merged_df, name_col):
     
     # Add choropleth layer
     folium.GeoJson(
-        merged_df,
+        merged_json,
         style_function=style_function,
         tooltip=folium.GeoJsonTooltip(
             fields=[name_col, 'crime_count', 'safety_level'],
@@ -296,7 +295,9 @@ def create_main_map(merged_df, name_col):
 
 # Create and display main map
 with st.spinner("Rendering map..."):
-    main_map = create_main_map(merged, name_col)
+    # Convert to GeoJSON format for faster rendering
+    merged_json = json.loads(merged.to_json())
+    main_map = create_main_map(merged_json, name_col)
     st_folium(main_map, width=1200, height=600, returned_objects=[])
 
 # --------------------------- 
