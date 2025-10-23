@@ -171,6 +171,7 @@ REPLACEMENTS = {
     'commr': 'commissioner',
     'commissionerate': 'commissioner', 
     'dist': 'district',
+    'district': '',
     'north': 'n',
     'south': 's',
     'east': 'e',
@@ -181,13 +182,15 @@ REPLACEMENTS = {
     'a & n': 'andaman nicobar',
     'city': '',
     'rural': '',
+    ' (': '',
+    ')': '',
 }
 
 @lru_cache(maxsize=1024)
 def normalize_name(s):
     if pd.isna(s):
         return ""
-    s = str(s).lower()
+    s = str(s).lower().strip()
     
     # Batch replace
     for old, new in REPLACEMENTS.items():
@@ -195,7 +198,7 @@ def normalize_name(s):
     
     # Keep alnum and spaces - optimized
     s = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in s)
-    s = " ".join(s.split())
+    s = " ".join(s.split()).strip()
     return s
 
 # ---------------------------
