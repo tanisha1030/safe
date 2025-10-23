@@ -208,7 +208,6 @@ merged = gdf_districts.merge(
 )
 
 # Generate synthetic low crime data for missing districts
-np.random.seed(42)  # For reproducibility
 districts_without_data = merged['crime_count'].isna()
 num_missing = districts_without_data.sum()
 
@@ -217,19 +216,29 @@ if num_missing > 0:
     actual_crimes = crime_agg['crime_count'].values
     low_crime_threshold = np.percentile(actual_crimes, 10)
     
-    # Generate synthetic data: random values between 1 and low_crime_threshold
-    synthetic_values = np.random.uniform(1, max(100, low_crime_threshold * 0.5), size=num_missing)
+    # Generate unique synthetic data: random WHOLE numbers between 1 and low_crime_threshold
+    # Use current state for randomness to avoid repetition
+    min_val = 50
+    max_val = int(max(500, low_crime_threshold * 0.5))
     
-    # Apply synthetic data
+    # Generate unique random integers
+    synthetic_values = np.random.choice(
+        range(min_val, max_val + 1), 
+        size=num_missing, 
+        replace=False if num_missing <= (max_val - min_val + 1) else True
+    ).astype(int)
+    
+    # Apply synthetic data as whole numbers
     merged.loc[districts_without_data, 'crime_count'] = synthetic_values
     merged.loc[districts_without_data, 'synthetic'] = True
     merged['synthetic'] = merged['synthetic'].fillna(False)
     
     st.info(f"ℹ️ Generated synthetic low crime data for {num_missing} districts without data")
 
-# Ensure no zero or NaN values
+# Ensure no zero or NaN values and convert all to integers
 merged['crime_count'] = merged['crime_count'].fillna(1)
 merged['crime_count'] = merged['crime_count'].replace(0, 1)
+merged['crime_count'] = merged['crime_count'].astype(int)
 
 # Calculate safety levels (all districts will have a level now)
 q1 = merged['crime_count'].quantile(0.33)
