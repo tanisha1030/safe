@@ -1,393 +1,228 @@
-# app.py - India Crime Heatmap with Debug
+# app.py
 import streamlit as st
+import pandas as pd
+import geopandas as gpd
+import glob, os, io, json, requests, random
+from shapely.geometry import Point
+from geopy.geocoders import Nominatim
+from geopy.distance import geodesic
+import folium
+from streamlit_folium import st_folium
 
-# Show loading progress
-st.write("🔄 Starting application...")
-
-try:
-    import pandas as pd
-    st.write("✅ Pandas loaded")
-except Exception as e:
-    st.error(f"❌ Pandas error: {e}")
-    st.stop()
-
-try:
-    import geopandas as gpd
-    st.write("✅ GeoPandas loaded")
-except Exception as e:
-    st.error(f"❌ GeoPandas error: {e}")
-    st.stop()
-
-try:
-    import glob, os, json, requests
-    from shapely.geometry import Point
-    import folium
-    from streamlit_folium import st_folium
-    from folium.plugins import Fullscreen
-    from geopy.geocoders import Nominatim
-    from geopy.distance import geodesic
-    import warnings
-    import numpy as np
-    warnings.filterwarnings("ignore")
-    st.write("✅ All imports successful")
-except Exception as e:
-    st.error(f"❌ Import error: {e}")
-    st.stop()
-
-st.set_page_config(page_title="India Crime Heatmap", layout="wide")
-st.title("🗺️ India Crime Heatmap - District Level Analysis")
-
-# CONFIGURATION
+# ---------------------------
+# CONFIG
+# ---------------------------
+st.set_page_config(page_title="India Crime Heatmap (Safesomes)", layout="wide")
 DATA_FOLDER = "data"
-GEOJSON_URLS = [
+POLICE_JSON = "police_stations.json"
+DEFAULT_GEOJSON_URLS = [
     "https://raw.githubusercontent.com/geohacker/india/master/district/india_district.geojson",
-    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson",
-    "https://raw.githubusercontent.com/datameet/maps/master/Districts/India_Districts.geojson"
+    "https://raw.githubusercontent.com/datta07/INDIAN-SHAPEFILES/master/INDIA/INDIA_DISTRICTS.geojson"
 ]
 
+# ---------------------------
+# Utilities
+# ---------------------------
 def normalize_name(s):
-    """Enhanced normalization for better district matching"""
     if pd.isna(s):
         return ""
-    
-    s = str(s).lower().strip()
-    
-    replacements = {
-        'bengaluru': 'bangalore',
-        'bangalore urban': 'bangalore',
-        'bengaluru urban': 'bangalore',
-        'mumbai city': 'mumbai',
-        'mumbai suburban': 'mumbai',
-        'delhi': 'new delhi',
-        'new delhi district': 'new delhi',
+    s = str(s).lower()
+    for old, new in {
         'commr': 'commissioner',
         'commissionerate': 'commissioner',
         'dist': 'district',
-        'north': 'n',
-        'south': 's',
-        'east': 'e',
-        'west': 'w',
-        'parganas': 'pargana',
-        '24 pargana': 'twenty four pargana',
-        'a and n': 'andaman nicobar',
-        'a & n': 'andaman nicobar',
-        'y s r': 'ysr',
-        'sri potti sriramulu nellore': 'nellore',
-    }
-    
-    for old, new in replacements.items():
+        'north': 'n', 'south': 's', 'east': 'e', 'west': 'w',
+        'city': '', 'rural': ''
+    }.items():
         s = s.replace(old, new)
-    
-    remove_words = ['city', 'rural', 'district', 'commissionerate', 'urban', 'metropolitan']
-    for word in remove_words:
-        s = s.replace(f' {word}', '')
-    
     s = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in s)
-    s = " ".join(s.split())
-    
-    return s
+    return " ".join(s.split())
 
+def load_police_json(path=POLICE_JSON):
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+police_db = load_police_json()
+
+# ---------------------------
+# Load & aggregate CSVs
+# ---------------------------
 @st.cache_data(show_spinner=False)
-def load_and_aggregate_csvs(data_folder):
-    """Fast CSV loading with better error handling"""
+def load_csv_data(data_folder):
     files = sorted(glob.glob(os.path.join(data_folder, "*.csv")))
     if not files:
-        return pd.DataFrame(), []
-    
+        return pd.DataFrame()
     all_data = []
-    
-    for idx, f in enumerate(files):
+    for f in files:
         try:
-            df = pd.read_csv(f, low_memory=False, encoding='utf-8')
+            df = pd.read_csv(f, low_memory=False)
         except:
             try:
-                df = pd.read_csv(f, low_memory=False, encoding='latin1')
-            except Exception as e:
+                df = pd.read_csv(f, encoding="latin1", low_memory=False)
+            except:
                 continue
-        
         district_col = None
-        for col in df.columns:
-            if 'district' in col.lower() or col.lower() == 'name':
-                district_col = col
+        for c in df.columns:
+            if "district" in c.lower():
+                district_col = c
                 break
-        
         if district_col is None:
             district_col = df.columns[0]
-        
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         if numeric_cols:
-            df['crime_count'] = df[numeric_cols].sum(axis=1)
+            df["_total"] = df[numeric_cols].sum(axis=1, numeric_only=True)
         else:
-            df['crime_count'] = 1
-        
-        df['district_norm'] = df[district_col].apply(normalize_name)
-        all_data.append(df[['district_norm', 'crime_count']])
-    
+            df["_total"] = 1
+        small = df[[district_col, "_total"]].copy()
+        small.columns = ["district_raw", "total"]
+        small["district_norm"] = small["district_raw"].apply(normalize_name)
+        all_data.append(small)
     if not all_data:
-        return pd.DataFrame(), files
-    
-    combined = pd.concat(all_data, ignore_index=True)
-    aggregated = combined.groupby('district_norm', as_index=False)['crime_count'].sum()
-    
-    return aggregated, files
+        return pd.DataFrame()
+    combined = pd.concat(all_data)
+    return combined.groupby("district_norm", as_index=False).agg({"total": "sum"})
 
-# Load data
-st.write("🔄 Loading crime data...")
-crime_agg, csv_files = load_and_aggregate_csvs(DATA_FOLDER)
+crime_agg = load_csv_data(DATA_FOLDER)
 
-if crime_agg.empty:
-    st.warning(f"⚠️ No CSV files found in `{DATA_FOLDER}`. Using demo data instead.")
-    # Create demo data
-    crime_agg = pd.DataFrame({
-        'district_norm': ['bangalore', 'mumbai', 'new delhi', 'chennai', 'kolkata'],
-        'crime_count': [5000, 4500, 4000, 3500, 3000]
-    })
-    csv_files = ['demo_data']
-
-st.success(f"✅ Loaded {len(csv_files)} CSV files, found {len(crime_agg)} districts")
-
+# ---------------------------
+# Load GeoJSON
+# ---------------------------
 @st.cache_data(show_spinner=False)
 def load_geojson():
-    """Load GeoJSON with multiple fallback sources"""
-    errors = []
-    
-    for idx, url in enumerate(GEOJSON_URLS):
+    for url in DEFAULT_GEOJSON_URLS:
         try:
-            st.write(f"🔄 Trying GeoJSON source {idx + 1}...")
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            gj = response.json()
-            gdf = gpd.GeoDataFrame.from_features(gj['features'])
-            st.write(f"✅ Loaded from source {idx + 1}")
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            gj = r.json()
+            gdf = gpd.GeoDataFrame.from_features(gj["features"])
             return gdf
-        except Exception as e:
-            errors.append(f"Source {idx + 1}: {str(e)}")
-            st.write(f"❌ Source {idx + 1} failed: {str(e)[:100]}")
+        except:
             continue
-    
-    st.error("❌ All GeoJSON sources failed. Please upload a file manually.")
-    st.write("**Attempted sources and errors:**")
-    for error in errors:
-        st.write(f"- {error}")
-    
-    st.write("\n**Upload your own GeoJSON:**")
-    uploaded_file = st.file_uploader(
-        "Upload India Districts GeoJSON",
-        type=["json", "geojson"],
-        help="Download from: https://github.com/geohacker/india/blob/master/district/india_district.geojson"
-    )
-    
-    if uploaded_file:
-        try:
-            gj = json.load(uploaded_file)
-            gdf = gpd.GeoDataFrame.from_features(gj['features'])
-            st.success("✅ Loaded map boundaries successfully!")
-            return gdf
-        except Exception as e:
-            st.error(f"Failed to load uploaded file: {str(e)}")
-    
+    st.error("Failed to load any GeoJSON file.")
     st.stop()
 
-st.write("🔄 Loading map boundaries...")
-gdf_districts = load_geojson()
+geo = load_geojson()
 
-# Find district name column
+# Determine district column
 name_col = None
-for col in ['NAME_2', 'district', 'DISTRICT', 'NAME', 'name']:
-    if col in gdf_districts.columns:
-        if gdf_districts[col].nunique() > 50:
-            name_col = col
-            break
+for c in geo.columns:
+    if "name" in c.lower() or "district" in c.lower():
+        name_col = c
+        break
+if not name_col:
+    name_col = geo.columns[0]
 
-if name_col is None:
-    st.error("Could not identify district column in GeoJSON")
-    st.write("Available columns:", gdf_districts.columns.tolist())
-    st.stop()
+geo["district_norm"] = geo[name_col].apply(normalize_name)
 
-st.write(f"✅ Using column: {name_col}")
+# Merge with data
+merged = geo.merge(crime_agg, on="district_norm", how="left")
 
-gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
-
-# Merge data with synthetic data generation
-merged = gdf_districts.merge(
-    crime_agg[['district_norm', 'crime_count']], 
-    on='district_norm', 
-    how='left'
-)
-
-# Generate synthetic low crime data for missing districts
-districts_without_data = merged['crime_count'].isna()
-num_missing = districts_without_data.sum()
-
-if num_missing > 0:
-    st.write(f"ℹ️ Generating synthetic data for {num_missing} districts...")
-    actual_crimes = crime_agg['crime_count'].values
-    low_crime_threshold = np.percentile(actual_crimes, 10)
-    
-    min_val = 50
-    max_val = int(max(500, low_crime_threshold * 0.5))
-    
-    synthetic_values = np.random.choice(
-        range(min_val, max_val + 1), 
-        size=num_missing, 
-        replace=False if num_missing <= (max_val - min_val + 1) else True
-    ).astype(int)
-    
-    merged.loc[districts_without_data, 'crime_count'] = synthetic_values
-    merged.loc[districts_without_data, 'synthetic'] = True
-    merged['synthetic'] = merged['synthetic'].fillna(False)
-
-merged['crime_count'] = merged['crime_count'].fillna(1)
-merged['crime_count'] = merged['crime_count'].replace(0, 1)
-merged['crime_count'] = merged['crime_count'].astype(int)
-
-# Calculate safety levels
-q1 = merged['crime_count'].quantile(0.33)
-q2 = merged['crime_count'].quantile(0.66)
-
-def classify_safety(val):
-    if val <= q1:
-        return "Low"
-    elif val <= q2:
-        return "Medium"
+# ---------------------------
+# Synthetic data generation (no JSON file)
+# ---------------------------
+for i, row in merged.iterrows():
+    if pd.isna(row["total"]) or row["total"] == 0:
+        merged.at[i, "total"] = random.randint(3000, 5000)
+        merged.at[i, "source"] = "synthetic"
     else:
-        return "High"
+        merged.at[i, "source"] = "csv"
 
-merged['safety_level'] = merged['crime_count'].apply(classify_safety)
+# ---------------------------
+# Map rendering
+# ---------------------------
+st.title("🗺️ India Crime Heatmap (Safesomes)")
+st.markdown("Green regions are **synthetic (safe)** — generated where no CSV data exists.")
 
-st.write("✅ Data processing complete!")
+m = folium.Map(location=[22.5, 79], zoom_start=5, tiles="CartoDB positron")
 
-# MAIN MAP
-st.subheader("🗺️ National Crime Heatmap")
-
-map_view = st.radio(
-    "Select Map View:",
-    ["Street Map", "Dark Mode", "Satellite"],
-    horizontal=True
-)
-
-def create_main_map(merged_json, name_col, view_type="Street Map"):
-    """Create optimized choropleth map"""
-    
-    if view_type == "Dark Mode":
-        tiles = "CartoDB dark_matter"
-    elif view_type == "Satellite":
-        tiles = None
+def color_for_row(row):
+    if row["source"] == "synthetic":
+        return "#4CAF50"  # green for synthetic
+    total = row["total"]
+    if total < merged["total"].quantile(0.33):
+        return "#81C784"  # low
+    elif total < merged["total"].quantile(0.66):
+        return "#FFF176"  # medium
     else:
-        tiles = "OpenStreetMap"
-    
-    m = folium.Map(
-        location=[20.5937, 78.9629],
-        zoom_start=5,
-        tiles=tiles,
-        prefer_canvas=True
-    )
-    
-    if view_type == "Satellite":
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri',
-            name='Esri Satellite',
-            overlay=False,
-            control=True
-        ).add_to(m)
-    
-    def style_function(feature):
-        safety = feature['properties'].get('safety_level', 'Low')
-        colors = {
-            'Low': '#4caf50',
-            'Medium': '#ffc107',
-            'High': '#f44336'
-        }
-        return {
-            'fillColor': colors.get(safety, '#4caf50'),
-            'color': '#ffffff',
-            'weight': 0.5,
-            'fillOpacity': 0.7
-        }
-    
+        return "#E57373"  # high
+
+for _, r in merged.iterrows():
+    color = color_for_row(r)
+    tooltip = f"{r[name_col]} — Crime Index: {int(r['total'])} ({r['source']})"
     folium.GeoJson(
-        merged_json,
-        style_function=style_function,
-        tooltip=folium.GeoJsonTooltip(
-            fields=[name_col, 'crime_count', 'safety_level'],
-            aliases=['District:', 'Crime Count:', 'Safety:'],
-            localize=True,
-            sticky=False
-        )
+        r.geometry.__geo_interface__,
+        style_function=lambda x, clr=color: {
+            "fillColor": clr, "color": "black", "weight": 0.4, "fillOpacity": 0.7
+        },
+        tooltip=tooltip
     ).add_to(m)
-    
-    legend_html = '''
-    <div style="position: fixed; bottom: 50px; left: 50px; z-index:9999; background-color:white; padding:10px; border:2px solid grey; border-radius:5px;">
-    <p><strong>Crime Risk Level</strong></p>
-    <p><span style="color:#4caf50;">⬤</span> Low Risk</p>
-    <p><span style="color:#ffc107;">⬤</span> Medium Risk</p>
-    <p><span style="color:#f44336;">⬤</span> High Risk</p>
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-    
-    Fullscreen(
-        position='topright',
-        title='Enter fullscreen',
-        title_cancel='Exit fullscreen',
-        force_separate_button=True
-    ).add_to(m)
-    
-    return m
 
-st.write("🔄 Rendering map...")
-merged_json = json.loads(merged.to_json())
-main_map = create_main_map(merged_json, name_col, map_view)
-st_folium(main_map, width=1200, height=600, returned_objects=[])
+st_folium(m, width=1100, height=650)
 
-st.success("✅ Application loaded successfully!")
+# ---------------------------
+# Safesomes Search
+# ---------------------------
+st.sidebar.header("🔍 Safesomes — Search")
+query = st.sidebar.text_input("Search by district or police station")
+btn = st.sidebar.button("Search")
 
-# Show district data summary
-st.markdown("---")
-st.subheader("📊 District Crime Data Summary")
+def safesomes_search(q):
+    q = q.lower().strip()
+    results = []
+    for _, r in merged.iterrows():
+        if q in str(r[name_col]).lower():
+            results.append({
+                "type": "district",
+                "name": r[name_col],
+                "crime": int(r["total"]),
+                "source": r["source"]
+            })
+    for d, stations in police_db.items():
+        for stn in stations:
+            if q in stn["name"].lower() or q in stn["address"].lower():
+                results.append({
+                    "type": "station",
+                    "district": d,
+                    "name": stn["name"],
+                    "address": stn["address"],
+                    "phone": stn["phone"]
+                })
+    return results
 
-col1, col2 = st.columns(2)
+if btn and query:
+    res = safesomes_search(query)
+    if not res:
+        st.sidebar.info("No match found.")
+    else:
+        for r in res:
+            if r["type"] == "district":
+                st.sidebar.markdown(f"**District:** {r['name']}  \nCrime Index: `{r['crime']}`  \nSource: `{r['source']}`")
+            else:
+                st.sidebar.markdown(f"**Station:** {r['name']}  \n📍 {r['address']}  \n📞 {r['phone']}")
 
-with col1:
-    st.metric("Total Districts", len(merged))
-    low_count = (merged['safety_level'] == 'Low').sum()
-    medium_count = (merged['safety_level'] == 'Medium').sum()
-    high_count = (merged['safety_level'] == 'High').sum()
-    
-    st.metric("Low Risk Districts", low_count)
-    st.metric("Medium Risk Districts", medium_count)
-    st.metric("High Risk Districts", high_count)
-
-with col2:
-    st.write("**Top 5 Highest Crime Districts:**")
-    top_districts = merged.nlargest(5, 'crime_count')[[name_col, 'crime_count', 'safety_level']]
-    for idx, row in top_districts.iterrows():
-        st.write(f"• {row[name_col]}: {int(row['crime_count']):,} crimes ({row['safety_level']})")
-
-# Searchable data table
-st.subheader("🔍 Search All Districts")
-search_term = st.text_input("Search district name:", placeholder="Type to filter...")
-
-display_df = merged[[name_col, 'crime_count', 'safety_level']].copy()
-display_df.columns = ['District Name', 'Crime Count', 'Safety Level']
-display_df = display_df.sort_values('Crime Count', ascending=False)
-
-if search_term:
-    display_df = display_df[display_df['District Name'].str.contains(search_term, case=False, na=False)]
-
-st.dataframe(
-    display_df,
-    use_container_width=True,
-    height=400
-)
-
-st.markdown("---")
-st.markdown("""
-**Notes:**
-- Application loaded successfully
-- All districts have crime data (synthetic values for missing data)
-- Safety levels: Low/Medium/High based on quantiles
-- Emergency: Police 100 | Ambulance 102 | Fire 101
-""")
+# ---------------------------
+# Optional: Location safety check
+# ---------------------------
+st.sidebar.header("📍 Check Safety by Location")
+loc_in = st.sidebar.text_input("Enter address or lat,lon")
+if st.sidebar.button("Find Safety"):
+    geo_locator = Nominatim(user_agent="safesomes-locator")
+    try:
+        if "," in loc_in:
+            lat, lon = [float(x) for x in loc_in.split(",")]
+        else:
+            loc = geo_locator.geocode(loc_in + ", India")
+            lat, lon = loc.latitude, loc.longitude
+        pt = Point(lon, lat)
+        contains = merged[merged.contains(pt)]
+        if len(contains) > 0:
+            r = contains.iloc[0]
+        else:
+            merged["centroid"] = merged.geometry.centroid
+            merged["dist_km"] = merged["centroid"].apply(lambda c: geodesic((c.y, c.x), (lat, lon)).km)
+            r = merged.loc[merged["dist_km"].idxmin()]
+        st.sidebar.success(f"District: {r[name_col]}  \nSafety Level: `{r['source']}`  \nCrime Index: `{int(r['total'])}`")
+    except Exception as e:
+        st.sidebar.error(f"Could not find location: {e}")
