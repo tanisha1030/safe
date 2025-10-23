@@ -6,6 +6,7 @@ import glob, os, json, requests
 from shapely.geometry import Point
 import folium
 from streamlit_folium import st_folium
+from folium.plugins import Fullscreen
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import warnings
@@ -340,6 +341,14 @@ def create_main_map(merged_json, name_col, view_type="Street Map"):
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
+    # Add fullscreen button
+    Fullscreen(
+        position='topright',
+        title='Enter fullscreen',
+        title_cancel='Exit fullscreen',
+        force_separate_button=True
+    ).add_to(m)
+    
     return m
 
 # Create and display main map
@@ -390,6 +399,146 @@ st.dataframe(
         "Safety Level": st.column_config.TextColumn()
     }
 )
+
+# ---------------------------
+# DISTANCE CALCULATOR BETWEEN DISTRICTS
+# ---------------------------
+st.markdown("---")
+st.subheader("📏 Calculate Distance Between Districts")
+
+col1, col2, col3 = st.columns([2, 2, 1])
+
+with col1:
+    district1 = st.selectbox(
+        "Select First District:",
+        options=sorted(merged[name_col].unique()),
+        key="district1"
+    )
+
+with col2:
+    district2 = st.selectbox(
+        "Select Second District:",
+        options=sorted(merged[name_col].unique()),
+        key="district2"
+    )
+
+with col3:
+    st.write("")
+    st.write("")
+    calc_distance = st.button("Calculate 📍", type="primary")
+
+if calc_distance and district1 and district2:
+    if district1 == district2:
+        st.warning("⚠️ Please select two different districts")
+    else:
+        # Get district data
+        dist1_data = merged[merged[name_col] == district1].iloc[0]
+        dist2_data = merged[merged[name_col] == district2].iloc[0]
+        
+        # Calculate centroids
+        centroid1 = dist1_data.geometry.centroid
+        centroid2 = dist2_data.geometry.centroid
+        
+        # Calculate distance
+        distance_km = geodesic(
+            (centroid1.y, centroid1.x),
+            (centroid2.y, centroid2.x)
+        ).km
+        
+        # Display results
+        st.success(f"📏 Distance: **{distance_km:.2f} km** ({distance_km/1.609:.2f} miles)")
+        
+        # Show comparison table
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**{district1}**")
+            st.write(f"Crime Count: {int(dist1_data['crime_count']):,}")
+            st.write(f"Safety Level: {dist1_data['safety_level']}")
+            color1 = {'Low': '🟢', 'Medium': '🟡', 'High': '🔴'}
+            st.write(f"Risk: {color1.get(dist1_data['safety_level'], '⚫')}")
+        
+        with col2:
+            st.markdown(f"**{district2}**")
+            st.write(f"Crime Count: {int(dist2_data['crime_count']):,}")
+            st.write(f"Safety Level: {dist2_data['safety_level']}")
+            color2 = {'Low': '🟢', 'Medium': '🟡', 'High': '🔴'}
+            st.write(f"Risk: {color2.get(dist2_data['safety_level'], '⚫')}")
+        
+        # Create visualization map
+        st.subheader("🗺️ Districts Location Map")
+        
+        distance_map_view = st.radio(
+            "Select Map View:",
+            ["Street Map", "Dark Mode", "Satellite"],
+            horizontal=True,
+            key="distance_map_view"
+        )
+        
+        # Define tile layers
+        if distance_map_view == "Dark Mode":
+            tiles = "CartoDB dark_matter"
+        elif distance_map_view == "Satellite":
+            tiles = None
+        else:
+            tiles = "OpenStreetMap"
+        
+        # Calculate center point between districts
+        center_lat = (centroid1.y + centroid2.y) / 2
+        center_lon = (centroid1.x + centroid2.x) / 2
+        
+        dist_map = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=6,
+            tiles=tiles
+        )
+        
+        # Add satellite imagery if selected
+        if distance_map_view == "Satellite":
+            folium.TileLayer(
+                tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                attr='Esri',
+                name='Esri Satellite',
+                overlay=False,
+                control=True
+            ).add_to(dist_map)
+        
+        # Add markers for both districts
+        folium.Marker(
+            location=[centroid1.y, centroid1.x],
+            popup=f"<b>{district1}</b><br>Crime: {int(dist1_data['crime_count']):,}<br>Safety: {dist1_data['safety_level']}",
+            tooltip=district1,
+            icon=folium.Icon(color='blue', icon='info-sign', prefix='glyphicon')
+        ).add_to(dist_map)
+        
+        folium.Marker(
+            location=[centroid2.y, centroid2.x],
+            popup=f"<b>{district2}</b><br>Crime: {int(dist2_data['crime_count']):,}<br>Safety: {dist2_data['safety_level']}",
+            tooltip=district2,
+            icon=folium.Icon(color='red', icon='info-sign', prefix='glyphicon')
+        ).add_to(dist_map)
+        
+        # Draw line between districts
+        folium.PolyLine(
+            locations=[
+                [centroid1.y, centroid1.x],
+                [centroid2.y, centroid2.x]
+            ],
+            color='purple',
+            weight=3,
+            opacity=0.7,
+            popup=f"Distance: {distance_km:.2f} km"
+        ).add_to(dist_map)
+        
+        # Add fullscreen
+        Fullscreen(
+            position='topright',
+            title='Enter fullscreen',
+            title_cancel='Exit fullscreen',
+            force_separate_button=True
+        ).add_to(dist_map)
+        
+        st_folium(dist_map, width=1200, height=500, returned_objects=[])
 
 # ---------------------------
 # LOCATION SEARCH - OPTIMIZED
@@ -489,6 +638,14 @@ if search_button and location_input:
             overlay=False,
             control=True
         ).add_to(local_map)
+    
+    # Add fullscreen button
+    Fullscreen(
+        position='topright',
+        title='Enter fullscreen',
+        title_cancel='Exit fullscreen',
+        force_separate_button=True
+    ).add_to(local_map)
     
     folium.Marker(
         location=[lat, lon],
