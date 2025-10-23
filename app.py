@@ -275,7 +275,14 @@ def create_main_map(merged_json, name_col):
         tooltip=folium.GeoJsonTooltip(
             fields=[name_col, 'crime_count', 'safety_level'],
             aliases=['District:', 'Crime Count:', 'Safety:'],
-            localize=True
+            localize=True,
+            sticky=False
+        ),
+        popup=folium.GeoJsonPopup(
+            fields=[name_col, 'crime_count', 'safety_level', 'district_norm'],
+            aliases=['District:', 'Crime Count:', 'Safety Level:', 'Normalized Name:'],
+            localize=True,
+            max_width=300
         )
     ).add_to(m)
     
@@ -286,7 +293,11 @@ def create_main_map(merged_json, name_col):
     <p><span style="color:#4caf50;">⬤</span> Low Risk</p>
     <p><span style="color:#ffc107;">⬤</span> Medium Risk</p>
     <p><span style="color:#f44336;">⬤</span> High Risk</p>
-    <p><span style="color:#e0e0e0;">⬤</span> No Data</p>
+    <p><span style="color:#e0e0e0;">⬤</span> No Data (0 crimes)</p>
+    <p style="margin-top:10px; font-size:11px; color:#666;">
+    💡 Click districts to see details<br/>
+    Hover for quick info
+    </p>
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
@@ -299,6 +310,47 @@ with st.spinner("Rendering map..."):
     merged_json = json.loads(merged.to_json())
     main_map = create_main_map(merged_json, name_col)
     st_folium(main_map, width=1200, height=600, returned_objects=[])
+
+# Show district data summary
+st.markdown("---")
+st.subheader("📊 District Crime Data Summary")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    # Statistics
+    st.metric("Total Districts", len(merged))
+    st.metric("Districts with Crime Data", (merged['crime_count'] > 0).sum())
+    st.metric("Districts with No Data", (merged['crime_count'] == 0).sum())
+
+with col2:
+    # Top 5 highest crime districts
+    st.write("**Top 5 Highest Crime Districts:**")
+    top_districts = merged.nlargest(5, 'crime_count')[[name_col, 'crime_count', 'safety_level']]
+    for idx, row in top_districts.iterrows():
+        st.write(f"• {row[name_col]}: {int(row['crime_count']):,} crimes ({row['safety_level']})")
+
+# Searchable data table
+st.subheader("🔍 Search All Districts")
+search_term = st.text_input("Search district name:", placeholder="Type to filter...")
+
+display_df = merged[[name_col, 'crime_count', 'safety_level', 'district_norm']].copy()
+display_df.columns = ['District Name', 'Crime Count', 'Safety Level', 'Normalized Name']
+display_df = display_df.sort_values('Crime Count', ascending=False)
+
+if search_term:
+    display_df = display_df[display_df['District Name'].str.contains(search_term, case=False, na=False) | 
+                            display_df['Normalized Name'].str.contains(search_term, case=False, na=False)]
+
+st.dataframe(
+    display_df,
+    use_container_width=True,
+    height=400,
+    column_config={
+        "Crime Count": st.column_config.NumberColumn(format="%d"),
+        "Safety Level": st.column_config.TextColumn()
+    }
+)
 
 # --------------------------- 
 # LOCATION SEARCH - OPTIMIZED
