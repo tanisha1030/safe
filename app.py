@@ -314,6 +314,9 @@ def load_geojson_from_url_or_upload(uploaded_file, urls):
 
 try:
     gdf_districts = load_geojson_from_url_or_upload(uploaded_geo, DEFAULT_GEOJSON_URLS)
+    # Set CRS if not already set
+    if gdf_districts.crs is None:
+        gdf_districts.set_crs(epsg=4326, inplace=True)
 except Exception as e:
     st.error("Could not load any remote GeoJSON sources. Please upload a district-level GeoJSON file.")
     st.write("You can download district boundaries from:")
@@ -364,6 +367,10 @@ gdf_districts['district_norm'] = gdf_districts[name_col].apply(normalize_name)
 # ---------------------------
 merged = gdf_districts.merge(crime_agg[['district_norm','crime_total']], on='district_norm', how='left')
 merged['crime_total'] = merged['crime_total'].fillna(0)
+
+# Ensure CRS is set for merged GeoDataFrame
+if merged.crs is None:
+    merged.set_crs(epsg=4326, inplace=True)
 
 # Show matching stats
 matched = (merged['crime_total'] > 0).sum()
