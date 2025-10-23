@@ -744,152 +744,152 @@ with search_tab2:
         st.write("")
         st.write("")
         search_button = st.button("🔍 Search", type="primary", key="coord_search")
-
+    
     if search_button and location_input:
-    geolocator = Nominatim(user_agent="crime-map", timeout=10)
-    
-    lat, lon = None, None
-    if ',' in location_input:
-        try:
-            parts = location_input.split(',')
-            lat, lon = float(parts[0].strip()), float(parts[1].strip())
-        except:
-            pass
-    
-    if lat is None:
-        with st.spinner("Geocoding location..."):
+        geolocator = Nominatim(user_agent="crime-map", timeout=10)
+        
+        lat, lon = None, None
+        if ',' in location_input:
             try:
-                location = geolocator.geocode(location_input + ", India")
-                if location:
-                    lat, lon = location.latitude, location.longitude
-                else:
-                    st.error("Could not find location. Try a different query.")
+                parts = location_input.split(',')
+                lat, lon = float(parts[0].strip()), float(parts[1].strip())
+            except:
+                pass
+        
+        if lat is None:
+            with st.spinner("Geocoding location..."):
+                try:
+                    location = geolocator.geocode(location_input + ", India")
+                    if location:
+                        lat, lon = location.latitude, location.longitude
+                    else:
+                        st.error("Could not find location. Try a different query.")
+                        st.stop()
+                except Exception as e:
+                    st.error(f"Geocoding failed: {str(e)}")
                     st.stop()
-            except Exception as e:
-                st.error(f"Geocoding failed: {str(e)}")
-                st.stop()
-    
-    st.success(f"📍 Found location: {lat:.4f}, {lon:.4f}")
-    
-    point = Point(lon, lat)
-    containing = merged[merged.contains(point)]
-    
-    if len(containing) > 0:
-        district_row = containing.iloc[0]
-    else:
-        merged_copy = merged.copy()
-        merged_copy['centroid'] = merged_copy.geometry.centroid
-        merged_copy['dist'] = merged_copy['centroid'].apply(
+        
+        st.success(f"📍 Found location: {lat:.4f}, {lon:.4f}")
+        
+        point = Point(lon, lat)
+        containing = merged[merged.contains(point)]
+        
+        if len(containing) > 0:
+            district_row = containing.iloc[0]
+        else:
+            merged_copy = merged.copy()
+            merged_copy['centroid'] = merged_copy.geometry.centroid
+            merged_copy['dist'] = merged_copy['centroid'].apply(
+                lambda c: geodesic((c.y, c.x), (lat, lon)).km
+            )
+            district_row = merged_copy.nsmallest(1, 'dist').iloc[0]
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("District", district_row[name_col])
+        with col2:
+            safety = district_row['safety_level']
+            color = {'Low': '🟢', 'Medium': '🟡', 'High': '🔴'}
+            st.metric("Safety Level", f"{safety} {color.get(safety, '🟢')}")
+        with col3:
+            st.metric("Crime Count", int(district_row['crime_count']))
+        
+        st.subheader("📍 Local Area Map")
+        
+        # Map view selector for local map
+        local_map_view = st.radio(
+            "Select Local Map View:",
+            ["Street Map", "Dark Mode", "Satellite"],
+            horizontal=True,
+            key="local_map_view"
+        )
+        
+        # Define tile layers
+        if local_map_view == "Dark Mode":
+            tiles = "CartoDB dark_matter"
+        elif local_map_view == "Satellite":
+            tiles = None
+        else:
+            tiles = "OpenStreetMap"
+        
+        local_map = folium.Map(
+            location=[lat, lon],
+            zoom_start=12,
+            tiles=tiles
+        )
+        
+        # Add satellite imagery if selected
+        if local_map_view == "Satellite":
+            folium.TileLayer(
+                tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                attr='Esri',
+                name='Esri Satellite',
+                overlay=False,
+                control=True
+            ).add_to(local_map)
+        
+        # Add fullscreen button
+        Fullscreen(
+            position='topright',
+            title='Enter fullscreen',
+            title_cancel='Exit fullscreen',
+            force_separate_button=True
+        ).add_to(local_map)
+        
+        folium.Marker(
+            location=[lat, lon],
+            popup=f"📍 Your Location<br>{lat:.4f}, {lon:.4f}",
+            tooltip="You are here",
+            icon=folium.Icon(color='blue', icon='info-sign')
+        ).add_to(local_map)
+        
+        merged_nearby = merged.copy()
+        merged_nearby['centroid'] = merged_nearby.geometry.centroid
+        merged_nearby['dist_km'] = merged_nearby['centroid'].apply(
             lambda c: geodesic((c.y, c.x), (lat, lon)).km
         )
-        district_row = merged_copy.nsmallest(1, 'dist').iloc[0]
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("District", district_row[name_col])
-    with col2:
-        safety = district_row['safety_level']
-        color = {'Low': '🟢', 'Medium': '🟡', 'High': '🔴'}
-        st.metric("Safety Level", f"{safety} {color.get(safety, '🟢')}")
-    with col3:
-        st.metric("Crime Count", int(district_row['crime_count']))
-    
-    st.subheader("📍 Local Area Map")
-    
-    # Map view selector for local map
-    local_map_view = st.radio(
-        "Select Local Map View:",
-        ["Street Map", "Dark Mode", "Satellite"],
-        horizontal=True,
-        key="local_map_view"
-    )
-    
-    # Define tile layers
-    if local_map_view == "Dark Mode":
-        tiles = "CartoDB dark_matter"
-    elif local_map_view == "Satellite":
-        tiles = None
-    else:
-        tiles = "OpenStreetMap"
-    
-    local_map = folium.Map(
-        location=[lat, lon],
-        zoom_start=12,
-        tiles=tiles
-    )
-    
-    # Add satellite imagery if selected
-    if local_map_view == "Satellite":
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri',
-            name='Esri Satellite',
-            overlay=False,
-            control=True
+        nearby_filtered = merged_nearby[merged_nearby['dist_km'] <= 20].copy()
+        
+        # Keep only necessary columns for display and remove non-serializable columns
+        display_columns = [name_col, 'crime_count', 'safety_level', 'dist_km', 'geometry']
+        nearby = nearby_filtered[display_columns].copy()
+        
+        # Ensure CRS is set to WGS84 (EPSG:4326) for folium compatibility
+        if nearby.crs is None:
+            nearby.set_crs("EPSG:4326", inplace=True)
+        elif nearby.crs.to_string() != "EPSG:4326":
+            nearby = nearby.to_crs("EPSG:4326")
+        
+        def style_nearby(feature):
+            safety = feature['properties'].get('safety_level', 'Low')
+            colors = {'Low': '#4caf50', 'Medium': '#ffc107', 'High': '#f44336'}
+            return {
+                'fillColor': colors.get(safety, '#4caf50'),
+                'color': '#ffffff',
+                'weight': 1,
+                'fillOpacity': 0.6
+            }
+        
+        folium.GeoJson(
+            nearby,
+            style_function=style_nearby,
+            tooltip=folium.GeoJsonTooltip(
+                fields=[name_col, 'safety_level', 'dist_km'],
+                aliases=['District:', 'Safety:', 'Distance (km):'],
+                localize=True
+            )
         ).add_to(local_map)
-    
-    # Add fullscreen button
-    Fullscreen(
-        position='topright',
-        title='Enter fullscreen',
-        title_cancel='Exit fullscreen',
-        force_separate_button=True
-    ).add_to(local_map)
-    
-    folium.Marker(
-        location=[lat, lon],
-        popup=f"📍 Your Location<br>{lat:.4f}, {lon:.4f}",
-        tooltip="You are here",
-        icon=folium.Icon(color='blue', icon='info-sign')
-    ).add_to(local_map)
-    
-    merged_nearby = merged.copy()
-    merged_nearby['centroid'] = merged_nearby.geometry.centroid
-    merged_nearby['dist_km'] = merged_nearby['centroid'].apply(
-        lambda c: geodesic((c.y, c.x), (lat, lon)).km
-    )
-    nearby_filtered = merged_nearby[merged_nearby['dist_km'] <= 20].copy()
-    
-    # Keep only necessary columns for display and remove non-serializable columns
-    display_columns = [name_col, 'crime_count', 'safety_level', 'dist_km', 'geometry']
-    nearby = nearby_filtered[display_columns].copy()
-    
-    # Ensure CRS is set to WGS84 (EPSG:4326) for folium compatibility
-    if nearby.crs is None:
-        nearby.set_crs("EPSG:4326", inplace=True)
-    elif nearby.crs.to_string() != "EPSG:4326":
-        nearby = nearby.to_crs("EPSG:4326")
-    
-    def style_nearby(feature):
-        safety = feature['properties'].get('safety_level', 'Low')
-        colors = {'Low': '#4caf50', 'Medium': '#ffc107', 'High': '#f44336'}
-        return {
-            'fillColor': colors.get(safety, '#4caf50'),
-            'color': '#ffffff',
-            'weight': 1,
-            'fillOpacity': 0.6
-        }
-    
-    folium.GeoJson(
-        nearby,
-        style_function=style_nearby,
-        tooltip=folium.GeoJsonTooltip(
-            fields=[name_col, 'safety_level', 'dist_km'],
-            aliases=['District:', 'Safety:', 'Distance (km):'],
-            localize=True
-        )
-    ).add_to(local_map)
-    
-    st_folium(local_map, width=1000, height=500, returned_objects=[])
-    
-    st.subheader("📋 Nearby Districts")
-    nearby_display = nearby_filtered[[name_col, 'crime_count', 'safety_level', 'dist_km']].copy()
-    nearby_display.columns = ['District', 'Crime Count', 'Safety Level', 'Distance (km)']
-    nearby_display = nearby_display.sort_values('Distance (km)').head(10)
-    st.dataframe(nearby_display, use_container_width=True)
-    
-    st.info("🚨 **Emergency Services**: Police: 100 | Ambulance: 102 | Fire: 101")
+        
+        st_folium(local_map, width=1000, height=500, returned_objects=[])
+        
+        st.subheader("📋 Nearby Districts")
+        nearby_display = nearby_filtered[[name_col, 'crime_count', 'safety_level', 'dist_km']].copy()
+        nearby_display.columns = ['District', 'Crime Count', 'Safety Level', 'Distance (km)']
+        nearby_display = nearby_display.sort_values('Distance (km)').head(10)
+        st.dataframe(nearby_display, use_container_width=True)
+        
+        st.info("🚨 **Emergency Services**: Police: 100 | Ambulance: 102 | Fire: 101")
 
 # Footer
 st.markdown("---")
