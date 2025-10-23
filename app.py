@@ -658,7 +658,11 @@ if search_button and location_input:
     merged_nearby['dist_km'] = merged_nearby['centroid'].apply(
         lambda c: geodesic((c.y, c.x), (lat, lon)).km
     )
-    nearby = merged_nearby[merged_nearby['dist_km'] <= 20].copy()
+    nearby_filtered = merged_nearby[merged_nearby['dist_km'] <= 20].copy()
+    
+    # Keep only necessary columns for display and remove non-serializable columns
+    display_columns = [name_col, 'crime_count', 'safety_level', 'dist_km', 'geometry']
+    nearby = nearby_filtered[display_columns].copy()
     
     # Ensure CRS is set to WGS84 (EPSG:4326) for folium compatibility
     if nearby.crs is None:
@@ -689,7 +693,7 @@ if search_button and location_input:
     st_folium(local_map, width=1000, height=500, returned_objects=[])
     
     st.subheader("📋 Nearby Districts")
-    nearby_display = nearby[[name_col, 'crime_count', 'safety_level', 'dist_km']].copy()
+    nearby_display = nearby_filtered[[name_col, 'crime_count', 'safety_level', 'dist_km']].copy()
     nearby_display.columns = ['District', 'Crime Count', 'Safety Level', 'Distance (km)']
     nearby_display = nearby_display.sort_values('Distance (km)').head(10)
     st.dataframe(nearby_display, use_container_width=True)
