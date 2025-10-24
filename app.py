@@ -29,7 +29,7 @@ st.markdown(
     "lets you check safety around a supplied place (address or `lat,lon`)."
 )
 
-# --------------------------- 
+# ---------------------------
 # LOAD POLICE STATIONS FROM CSV
 # ---------------------------
 @st.cache_data(show_spinner=False)
@@ -50,7 +50,7 @@ def load_police_stations_csv(filepath="police.csv"):
 # Load police stations data
 police_df = load_police_stations_csv()
 
-# --------------------------- 
+# ---------------------------
 # EMERGENCY CONTACTS DATABASE (National & Specialized only)
 # ---------------------------
 EMERGENCY_CONTACTS = {
@@ -84,20 +84,20 @@ def get_police_stations_for_district(district_name, state_name=None):
     """Get police stations from CSV for a specific district"""
     if police_df.empty:
         return []
-    
+        
     # Normalize district name for matching
     district_normalized = normalize_name(district_name)
-    
+        
     # Filter police stations by district
     filtered = police_df.copy()
     filtered['district_normalized'] = filtered['district'].apply(normalize_name)
-    
+        
     matches = filtered[filtered['district_normalized'] == district_normalized]
-    
+        
     # If state is provided, also filter by state
     if state_name and not matches.empty:
         matches = matches[matches['state'].str.lower() == state_name.lower()]
-    
+        
     # Convert to list of dictionaries
     stations = []
     for _, row in matches.iterrows():
@@ -107,35 +107,35 @@ def get_police_stations_for_district(district_name, state_name=None):
             'phone': row['phone'] if pd.notna(row['phone']) and row['phone'] != 'Not available' else None
         }
         stations.append(station_info)
-    
+        
     return stations
 
 def display_emergency_contacts():
     """Display emergency contacts in an organized manner"""
     st.sidebar.markdown("---")
     st.sidebar.header("🚨 Emergency Contacts")
-    
+        
     # National Emergency Numbers (always visible)
     with st.sidebar.expander("🇮🇳 National Emergency Numbers", expanded=True):
         for service, number in EMERGENCY_CONTACTS["National"].items():
             st.markdown(f"**{service}:** `{number}`")
-    
+        
     # Specialized services
     with st.sidebar.expander("🛡️ Specialized Services"):
         for service, number in EMERGENCY_CONTACTS["Specialized Services"].items():
             st.markdown(f"**{service}:** `{number}`")
-    
+        
     # Quick dial section
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📞 Quick Emergency Dial")
-    
+        
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.button("🚔 Police\n100", key="police_btn"):
             st.sidebar.success("Dial: 100")
         if st.button("🔥 Fire\n101", key="fire_btn"):
             st.sidebar.success("Dial: 101")
-    
+        
     with col2:
         if st.button("🚑 Ambulance\n102", key="ambulance_btn"):
             st.sidebar.success("Dial: 102")
@@ -145,19 +145,19 @@ def display_emergency_contacts():
 def get_region_specific_contacts(district_name, state_name=None):
     """Get emergency contacts specific to a region"""
     contacts = EMERGENCY_CONTACTS["National"].copy()
-    
+        
     # Get police stations from CSV for this district
     police_stations = get_police_stations_for_district(district_name, state_name)
-    
+        
     # Add police stations to contacts
     for i, station in enumerate(police_stations[:3]):  # Limit to first 3 stations
         station_name = station['name']
         if station['phone']:
             contacts[station_name] = station['phone']
-    
+        
     return contacts
 
-# --------------------------- 
+# ---------------------------
 # PARAMETERS - Updated working URLs
 # ---------------------------
 DEFAULT_GEOJSON_URLS = [
@@ -168,33 +168,80 @@ DATA_FOLDER = "data"
 NEAREST_RADIUS_KM = 5  # radius for nearest POIs
 
 # ---------------------------
-# UTIL: normalize district strings
+# UTIL: normalize district strings - IMPROVED
 # ---------------------------
 def normalize_name(s):
     if pd.isna(s):
         return ""
     s = str(s).lower()
+        
+    # Handle common city/district name variations FIRST (before general replacements)
+    city_variations = {
+        'bangalore': 'bengaluru',
+        'bangalore urban': 'bengaluru',
+        'bangalore rural': 'bengaluru',
+        'bombay': 'mumbai',
+        'calcutta': 'kolkata',
+        'madras': 'chennai',
+        'ooty': 'udhagamandalam',
+        'pondicherry': 'puducherry',
+        'trivandrum': 'thiruvananthapuram',
+        'cochin': 'kochi',
+        'cawnpore': 'kanpur',
+        'benares': 'varanasi',
+        'poona': 'pune',
+        'mysore': 'mysuru',
+        'mangalore': 'mangaluru',
+        'belgaum': 'belagavi',
+        'gulbarga': 'kalaburagi',
+        'bellary': 'ballari',
+        'bijapur': 'vijayapura',
+        'shimoga': 'shivamogga',
+        'tumkur': 'tumakuru',
+        'hubli': 'hubballi',
+        'vizag': 'visakhapatnam',
+        'vizianagaram': 'visakhapatnam',
+        'ganjam': 'ganjam',
+        'allahabad': 'prayagraj',
+        'benaras': 'varanasi',
+        'orissa': 'odisha',
+        'orrisa': 'odisha'
+    }
     
+    # Apply city variations first
+    for old_name, new_name in city_variations.items():
+        if old_name in s:
+            s = s.replace(old_name, new_name)
+        
     # Handle common variations in Indian district names
     replacements = {
         'commr': 'commissioner',
-        'commissionerate': 'commissioner', 
+        'commissionerate': 'commissioner',
         'dist': 'district',
+        'distt': 'district',
         'north': 'n',
-        'south': 's', 
+        'south': 's',
         'east': 'e',
         'west': 'w',
         'parganas': 'pargana',
         '24 pargana': 'twenty four pargana',
+        'twenty four pargana': 'twenty four pargana',
         'a and n': 'andaman nicobar',
         'a & n': 'andaman nicobar',
+        'andaman and nicobar': 'andaman nicobar',
         'city': '',
         'rural': '',
+        'urban': '',
+        'metropolitan': '',
+        'metro': '',
+        'corporation': '',
+        'municipal': '',
+        'nagar': '',
     }
-    
+        
     for old, new in replacements.items():
         s = s.replace(old, new)
-    
+        
     # keep alnum and spaces
     s = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in s)
     s = " ".join(s.split())
@@ -307,7 +354,7 @@ def load_geojson_from_url_or_upload(uploaded_file, urls):
         gj = json.load(uploaded_file)
         gdf = gpd.GeoDataFrame.from_features(gj["features"])
         return gdf
-    
+        
     # Try multiple URLs
     for i, url in enumerate(urls):
         try:
@@ -318,7 +365,7 @@ def load_geojson_from_url_or_upload(uploaded_file, urls):
             return gdf
         except Exception as e:
             continue
-    
+        
     raise Exception("All sources failed")
 
 try:
@@ -395,26 +442,27 @@ if missing > 0.5 * total:
     st.warning("⚠️ Many districts are unmatched. Consider:")
     st.write("1. Check if your CSV district names match the GeoJSON names")
     st.write("2. Upload a different GeoJSON file that matches your data")
-    
+        
     # Show some examples of unmatched vs CSV names
     unmatched_sample = merged[merged['crime_total'] == 0][name_col].head(10).tolist()
     csv_sample = crime_agg['district_example'].head(10).tolist()
-    
+        
     # Show normalized versions for debugging
     unmatched_norm = merged[merged['crime_total'] == 0]['district_norm'].head(10).tolist()
     csv_norm = crime_agg['district_norm'].head(10).tolist()
-    
+        
     col1, col2 = st.columns(2)
     with col1:
         st.write("**Sample GeoJSON districts (unmatched):**")
         for orig, norm in zip(unmatched_sample, unmatched_norm):
             st.write(f"'{orig}' → '{norm}'")
-    
+        
     with col2:
-        st.write("**Sample CSV districts:**") 
+        st.write("**Sample CSV districts:**")
+        
         for orig, norm in zip(csv_sample, csv_norm):
             st.write(f"'{orig}' → '{norm}'")
-    
+        
     # Show if there are any matches between the normalized names
     geo_norms = set(merged['district_norm'].tolist())
     csv_norms = set(crime_agg['district_norm'].tolist())
@@ -491,11 +539,11 @@ folium.TileLayer('CartoDB dark_matter', name='Dark Mode').add_to(m)
 def style_function(feature):
     val = feature['properties'].get('crime_total', 0)
     safety_level = feature['properties'].get('safety_level', 'No Data')
-    
+        
     # Determine if it's a danger zone based on threshold
     max_crime = merged['crime_total'].max()
     is_danger_zone = val > (max_crime * danger_threshold) if max_crime > 0 else False
-    
+        
     if safety_level == "No Data":
         color_fill = '#f0f0f0'  # Light gray
         border_color = '#cccccc'
@@ -516,7 +564,7 @@ def style_function(feature):
         color_fill = '#6bcf7f'  # Green
         border_color = '#51b364'
         border_weight = 0.6
-    
+        
     return {
         'fillColor': color_fill,
         'color': border_color,
@@ -530,15 +578,15 @@ def create_tooltip_html(row):
     district = row[name_col]
     crime_count = int(row['crime_total'])
     safety = row['safety_level']
-    
+        
     # Safety emoji
     emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "No Data": "⚫"}.get(safety, "⚫")
-    
+        
     # Determine danger status
     max_crime = merged['crime_total'].max()
     is_danger = crime_count > (max_crime * danger_threshold) if max_crime > 0 else False
     danger_text = "🚨 DANGER ZONE" if is_danger else ""
-    
+        
     html = f"""
     <div style="font-family: Arial; font-size: 12px; min-width: 200px;">
         <b style="font-size: 14px;">{district}</b><br>
@@ -551,15 +599,10 @@ def create_tooltip_html(row):
     """
     return html
 
-# Add district polygons with enhanced styling
+# Add district polygons with enhanced styling - NO EMERGENCY CONTACTS
 district_layer = folium.FeatureGroup(name="🏛️ Districts")
 for _, row in merged.iterrows():
-    # Create popup with detailed information including emergency contacts from CSV
-    region_contacts = get_region_specific_contacts(row[name_col])
-    emergency_info = ""
-    for service, number in list(region_contacts.items())[:5]:  # Show first 5 emergency numbers
-        emergency_info += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
-    
+    # Create popup WITHOUT emergency contacts
     popup_html = f"""
     <div style="font-family: Arial; max-width: 300px;">
         <h4 style="margin: 0 0 10px 0; color: #2c3e50;">{row[name_col]}</h4>
@@ -569,15 +612,10 @@ for _, row in merged.iterrows():
             <tr><td><b>Risk Category:</b></td><td>{'High Risk' if row['crime_total'] > (merged['crime_total'].max() * danger_threshold) else 'Moderate/Low Risk'}</td></tr>
         </table>
         <hr style="margin: 10px 0;">
-        <h5 style="margin: 5px 0; color: #e74c3c;">🚨 Emergency Contacts:</h5>
-        <table style="width: 100%; font-size: 11px;">
-            {emergency_info}
-        </table>
-        <hr style="margin: 10px 0;">
         <small style="color: #7f8c8d;">Based on aggregated crime data from multiple sources</small>
     </div>
     """
-    
+        
     folium.GeoJson(
         row.geometry.__geo_interface__,
         style_function=lambda x, row=row: style_function({'properties': row}),
@@ -591,7 +629,7 @@ district_layer.add_to(m)
 if show_pois and not police_df.empty:
     with st.spinner("Loading police stations from database..."):
         police_layer = folium.FeatureGroup(name="🚔 Police Stations")
-        
+                
         # Create a dictionary for quick district lookup with coordinates
         district_coords = {}
         for _, row in merged.iterrows():
@@ -602,24 +640,24 @@ if show_pois and not police_df.empty:
                     district_coords[district_norm] = (centroid.y, centroid.x)
                 except:
                     pass
-        
+                
         # Add police stations from CSV
         added_stations = 0
         for _, station in police_df.iterrows():
             # Skip if no essential info
             if pd.isna(station['name']) or pd.isna(station['district']):
                 continue
-            
+                        
             # Normalize district name to match with our mapping
             station_district_norm = normalize_name(station['district'])
-            
+                        
             # Get coordinates from district centroid
             if station_district_norm in district_coords:
                 stat_lat, stat_lon = district_coords[station_district_norm]
-                
+                                
                 # Create popup with station details
                 phone_info = f"<b>Phone:</b> {station['phone']}<br>" if pd.notna(station['phone']) and station['phone'] != 'Not available' else ""
-                
+                                
                 popup_html = f"""
                 <div style="font-family: Arial; max-width: 250px;">
                     <h4 style="margin: 0 0 8px 0; color: #c0392b;">🚔 {station['name']}</h4>
@@ -632,16 +670,16 @@ if show_pois and not police_df.empty:
                     <small style="color: #7f8c8d;">Emergency: <b>100</b></small>
                 </div>
                 """
-                
+                                
                 folium.Marker(
                     location=[stat_lat, stat_lon],
                     popup=folium.Popup(popup_html, max_width=270),
                     tooltip=f"🚔 {station['name']}",
                     icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
                 ).add_to(police_layer)
-                
+                                
                 added_stations += 1
-        
+                
         police_layer.add_to(m)
         if added_stations > 0:
             st.success(f"Added {added_stations} police stations to the map (using district centroids)")
@@ -653,9 +691,8 @@ legend_html = f"""
      background-color: white; border:2px solid grey; z-index:9999; 
      font-size:12px; padding: 10px; box-shadow: 0 0 15px rgba(0,0,0,0.2);
      border-radius: 5px;">
-  
-<h4 style="margin: 0 0 10px 0; text-align: center;">🛡️ Safety Legend</h4>
-<p style="margin: 5px 0;"><span style="color: #6bcf7f;">🟢</span> <b>Low Risk</b> - Safe areas</p>
+   <h4 style="margin: 0 0 10px 0; text-align: center;">🛡️ Safety Legend</h4>
+color: #6bcf7f;">🟢</span> <b>Low Risk</b> - Safe areas</p>
 <p style="margin: 5px 0;"><span style="color: #ffd93d;">🟡</span> <b>Medium Risk</b> - Moderate caution</p>
 <p style="margin: 5px 0;"><span style="color: #ff6b6b;">🔴</span> <b>High Risk</b> - Exercise caution</p>
 <p style="margin: 5px 0;"><span style="color: #ff0000;">🚨</span> <b>Danger Zone</b> - High alert</p>
@@ -685,6 +722,66 @@ except ImportError:
 
 # Display the main map
 st_data = st_folium(m, width=1200, height=700)
+
+# ---------------------------
+# EMERGENCY CONTACTS PANEL - Below the map
+# ---------------------------
+st.markdown("---")
+st.subheader("🚨 Emergency Contacts - India")
+
+# Create columns for emergency contacts
+emergency_col1, emergency_col2, emergency_col3, emergency_col4 = st.columns(4)
+
+with emergency_col1:
+    st.markdown("""
+    <div style="background-color: #dc3545; padding: 15px; border-radius: 10px; text-align: center; color: white;">
+        <h2 style="margin: 0; color: white;">🚔</h2>
+        <h3 style="margin: 5px 0; color: white;">Police</h3>
+        <h1 style="margin: 5px 0; color: white;">100</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+with emergency_col2:
+    st.markdown("""
+    <div style="background-color: #fd7e14; padding: 15px; border-radius: 10px; text-align: center; color: white;">
+        <h2 style="margin: 0; color: white;">🔥</h2>
+        <h3 style="margin: 5px 0; color: white;">Fire</h3>
+        <h1 style="margin: 5px 0; color: white;">101</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+with emergency_col3:
+    st.markdown("""
+    <div style="background-color: #28a745; padding: 15px; border-radius: 10px; text-align: center; color: white;">
+        <h2 style="margin: 0; color: white;">🚑</h2>
+        <h3 style="margin: 5px 0; color: white;">Ambulance</h3>
+        <h1 style="margin: 5px 0; color: white;">102</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+with emergency_col4:
+    st.markdown("""
+    <div style="background-color: #6f42c1; padding: 15px; border-radius: 10px; text-align: center; color: white;">
+        <h2 style="margin: 0; color: white;">👩</h2>
+        <h3 style="margin: 5px 0; color: white;">Women Helpline</h3>
+        <h1 style="margin: 5px 0; color: white;">1091</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# More emergency contacts in expandable sections
+col_a, col_b = st.columns(2)
+
+with col_a:
+    with st.expander("📞 More National Emergency Numbers"):
+        for service, number in EMERGENCY_CONTACTS["National"].items():
+            st.markdown(f"**{service}:** `{number}`")
+
+with col_b:
+    with st.expander("🛡️ Specialized Services"):
+        for service, number in EMERGENCY_CONTACTS["Specialized Services"].items():
+            st.markdown(f"**{service}:** `{number}`")
 
 # ---------------------------
 # Sidebar: location input
@@ -774,7 +871,7 @@ if loc_input:
         else:
             lat, lon, resolved = p[0], p[1], (p[2] if len(p)>2 else None)
             st.sidebar.markdown(f"**Resolved:** {resolved if resolved else ''} ({lat:.5f}, {lon:.5f})")
-            
+                        
             # find district
             nearest_district_row = find_district_for_point((lat, lon), merged.copy())
             st.write("### Location analysis")
@@ -782,19 +879,19 @@ if loc_input:
                 district_name = nearest_district_row[name_col]
                 safety = nearest_district_row['safety_level']
                 crime_count = int(nearest_district_row['crime_total'])
-                
+                                
                 if safety == "No Data":
                     st.warning(f"You are in/near **{district_name}** – **No crime data available** for this district.")
                 else:
                     color = "🟢" if safety == "Low" else ("🟡" if safety == "Medium" else "🔴")
                     st.success(f"You are in/near **{district_name}** – Safety Level: **{safety}** {color} (crime count: {crime_count})")
-                
+                                
                 # Display location-specific emergency contacts from CSV
                 st.subheader("📞 Emergency Contacts for Your Area")
-                
+                                
                 # Get police stations from CSV for this district
                 police_stations = get_police_stations_for_district(district_name)
-                
+                                
                 # Display national emergency contacts
                 st.markdown("#### 🇮🇳 National Emergency Numbers")
                 emergency_cols = st.columns(4)
@@ -804,7 +901,7 @@ if loc_input:
                     ("🔥 Fire", "101"),
                     ("👩 Women Helpline", "1091")
                 ]
-                
+                                
                 for i, (service, number) in enumerate(national_contacts):
                     with emergency_cols[i]:
                         st.markdown(f"""
@@ -813,7 +910,7 @@ if loc_input:
                             <h4 style="margin: 5px 0 0 0; color: #212529;">{number}</h4>
                         </div>
                         """, unsafe_allow_html=True)
-                
+                                
                 # Display local police stations from CSV
                 if police_stations:
                     st.markdown("#### 🚔 Local Police Stations")
@@ -830,52 +927,52 @@ if loc_input:
                         st.markdown("---")
                 else:
                     st.info("No local police station data available for this district. Use national emergency number 100.")
-                
+                                
                 # Quick dial buttons for essential services
                 st.markdown("### 🚨 Quick Emergency Actions")
                 emergency_actions = st.columns(4)
-                
+                                
                 with emergency_actions[0]:
                     if st.button("🚔 Call Police (100)", type="primary", key="quick_police"):
                         st.success("Emergency Number: 100\n\nDial immediately for police assistance")
-                
+                                
                 with emergency_actions[1]:
                     if st.button("🚑 Call Ambulance (102)", type="secondary", key="quick_ambulance"):
                         st.success("Emergency Number: 102\n\nDial for medical emergency")
-                
+                                
                 with emergency_actions[2]:
                     if st.button("🔥 Fire Service (101)", type="secondary", key="quick_fire"):
                         st.success("Emergency Number: 101\n\nDial for fire emergency")
-                
+                                
                 with emergency_actions[3]:
                     if st.button("👩 Women Helpline (1091)", type="secondary", key="quick_women"):
                         st.success("Emergency Number: 1091\n\nDial for women's safety assistance")
-                        
+                                    
             except Exception:
                 st.info("Could not map to a district polygon; showing nearest districts.")
-
+            
             # find surrounding districts within radius
             nearby_districts = districts_within_radius((lat,lon), merged.copy(), radius_km=10)
             st.write(f"Districts within 10 km: {len(nearby_districts)}")
             if not nearby_districts.empty:
                 nd_display = nearby_districts[[name_col,'crime_total','safety_level','dist_km']].rename(columns={name_col:'District','crime_total':'Crime Count','safety_level':'Safety','dist_km':'Distance_km'})
                 st.dataframe(nd_display.head(20))
-
+            
             # Overpass POIs
             with st.spinner("Fetching nearby points of interest..."):
                 elements = overpass_query_pois(lat, lon, radius_m=NEAREST_RADIUS_KM*1000)
             st.write(f"Found {len(elements)} nearby POI elements (police/residential/shelters) within {NEAREST_RADIUS_KM} km via Overpass API.")
-
+            
             # Build a focused local area map
             st.subheader("🔍 Local Safety Analysis Map")
-            
+                        
             # Local map controls
             local_col1, local_col2 = st.columns(2)
             with local_col1:
                 local_map_style = st.selectbox("Local Map Style:", ["Street", "Satellite", "Hybrid"], key="local_style")
             with local_col2:
                 search_radius = st.slider("POI Search Radius (km):", 1, 20, 5, key="search_radius")
-            
+                        
             # Configure local map tiles
             if local_map_style == "Street":
                 local_tiles = "OpenStreetMap"
@@ -883,14 +980,14 @@ if loc_input:
                 local_tiles = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
             else:  # Hybrid
                 local_tiles = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            
+                        
             m_local = folium.Map(
                 location=[lat, lon], 
                 zoom_start=12, 
                 tiles=local_tiles,
                 attr="Esri" if local_map_style != "Street" else "OpenStreetMap"
             )
-            
+                        
             # Add different tile layers
             folium.TileLayer('OpenStreetMap', name='Street View').add_to(m_local)
             folium.TileLayer(
@@ -898,15 +995,15 @@ if loc_input:
                 attr='Esri',
                 name='Satellite View'
             ).add_to(m_local)
-            
-            # Draw nearby districts with enhanced styling
+                        
+            # Draw nearby districts with enhanced styling - NO EMERGENCY CONTACTS
             for _, row in nearby_districts.iterrows():
                 try:
                     geom = row.geometry
                     lvl = row['safety_level']
                     district_name = row[name_col]
                     crime_count = int(row['crime_total'])
-                    
+                                        
                     if lvl == "No Data":
                         color = "#f0f0f0"
                         border_color = "#cccccc"
@@ -919,20 +1016,8 @@ if loc_input:
                     else:  # Low
                         color = "#6bcf7f"
                         border_color = "#51b364"
-                    
-                    # Enhanced popup for districts with emergency contacts from CSV
-                    district_police = get_police_stations_for_district(district_name)
-                    emergency_list = ""
-                    
-                    # Add national contacts
-                    for service, number in list(EMERGENCY_CONTACTS["National"].items())[:3]:
-                        emergency_list += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
-                    
-                    # Add local police stations from CSV
-                    for station in district_police[:2]:
-                        if station['phone']:
-                            emergency_list += f"<tr><td>{station['name']}:</td><td><b>{station['phone']}</b></td></tr>"
-                    
+                                        
+                    # Popup WITHOUT emergency contacts
                     popup_html = f"""
                     <div style="font-family: Arial; max-width: 280px;">
                         <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{district_name}</h4>
@@ -942,13 +1027,10 @@ if loc_input:
                             <tr><td><b>Distance:</b></td><td>{row['dist_km']:.1f} km</td></tr>
                         </table>
                         <hr style="margin: 8px 0;">
-                        <h6 style="margin: 5px 0; color: #e74c3c;">Emergency Contacts:</h6>
-                        <table style="width: 100%; font-size: 10px;">
-                            {emergency_list}
-                        </table>
+                        <small style="color: #7f8c8d;">Check emergency contacts panel below the map</small>
                     </div>
                     """
-                    
+                                        
                     folium.GeoJson(
                         data=geom.__geo_interface__, 
                         style_function=lambda feat, col=color, border=border_color: {
@@ -963,7 +1045,7 @@ if loc_input:
                     ).add_to(m_local)
                 except Exception:
                     pass
-
+            
             # Add user location with enhanced marker
             folium.CircleMarker(
                 location=[lat, lon], 
@@ -974,7 +1056,7 @@ if loc_input:
                 popup=folium.Popup(f"<b>📍 Your Location</b><br>{lat:.5f}, {lon:.5f}<br><hr><b>Emergency: 100 (Police)</b>", max_width=200),
                 tooltip="📍 You are here"
             ).add_to(m_local)
-            
+                        
             # Add search radius circle
             folium.Circle(
                 location=[lat, lon],
@@ -985,23 +1067,23 @@ if loc_input:
                 opacity=0.5,
                 popup=f"Search Radius: {search_radius} km"
             ).add_to(m_local)
-
+            
             # Enhanced POI markers with clustering
             try:
                 marker_cluster = MarkerCluster(name="📍 Points of Interest").add_to(m_local)
             except:
                 marker_cluster = m_local  # Fallback if clustering not available
-            
+                        
             # Re-fetch POIs with updated radius
             elements = overpass_query_pois(lat, lon, radius_m=search_radius*1000)
-            
+                        
             poi_categories = {
                 'police': {'count': 0, 'icon': 'shield-alt', 'color': 'red', 'prefix': 'fa'},
                 'hospital': {'count': 0, 'icon': 'plus', 'color': 'blue', 'prefix': 'fa'},
                 'residential': {'count': 0, 'icon': 'home', 'color': 'green', 'prefix': 'fa'},
                 'shelter': {'count': 0, 'icon': 'bed', 'color': 'purple', 'prefix': 'fa'}
             }
-            
+                        
             for el in elements:
                 # Get coordinates
                 if el.get('type') == 'node' and 'lat' in el and 'lon' in el:
@@ -1010,17 +1092,17 @@ if loc_input:
                     el_lat, el_lon = el['center']['lat'], el['center']['lon']
                 else:
                     continue
-                
+                                
                 tags = el.get('tags', {})
                 name = tags.get('name', tags.get('operator', 'POI'))
                 distance = geodesic((lat, lon), (el_lat, el_lon)).km
-                
+                                
                 # Categorize POI
                 amenity = tags.get('amenity', '')
                 building = tags.get('building', '')
                 landuse = tags.get('landuse', '')
                 healthcare = tags.get('healthcare', '')
-                
+                                
                 if amenity in ('police', 'police_station'):
                     category = 'police'
                     icon_config = poi_categories['police']
@@ -1035,9 +1117,9 @@ if loc_input:
                     icon_config = poi_categories['residential']
                 else:
                     continue  # Skip unknown POIs
-                
+                                
                 poi_categories[category]['count'] += 1
-                
+                                
                 # Create detailed popup with emergency info
                 popup_html = f"""
                 <div style="font-family: Arial; max-width: 250px;">
@@ -1054,7 +1136,7 @@ if loc_input:
                     <small style="color: #7f8c8d;">Source: OpenStreetMap</small>
                 </div>
                 """
-                
+                                
                 folium.Marker(
                     location=[el_lat, el_lon],
                     popup=folium.Popup(popup_html, max_width=270),
@@ -1065,23 +1147,23 @@ if loc_input:
                         prefix=icon_config['prefix']
                     )
                 ).add_to(marker_cluster)
-
+            
             # Add layer control to local map
             folium.LayerControl().add_to(m_local)
-            
+                        
             # Add fullscreen button
             try:
                 Fullscreen().add_to(m_local)
             except:
                 pass
-            
+                        
             # Display local map
             st_folium(m_local, width=1000, height=600)
-            
+                        
             # POI Summary Statistics
             st.subheader("📊 Nearby Points of Interest Summary")
             col1, col2, col3, col4 = st.columns(4)
-            
+                        
             with col1:
                 st.metric("🚔 Police Stations", poi_categories['police']['count'])
             with col2:
@@ -1090,10 +1172,10 @@ if loc_input:
                 st.metric("🏠 Residential Areas", poi_categories['residential']['count'])
             with col4:
                 st.metric("🏨 Shelters", poi_categories['shelter']['count'])
-
+            
             # List nearest police stations from CSV and Overpass
             st.subheader("🚔 Nearest Police Stations")
-            
+                        
             # First show police stations from CSV for this district
             csv_police = get_police_stations_for_district(district_name)
             if csv_police:
@@ -1102,7 +1184,7 @@ if loc_input:
                     phone_str = f"| Contact: **{station['phone']}**" if station['phone'] else "| Contact: **Call 100**"
                     st.write(f"• **{station['name']}** – {station['address']} {phone_str}")
                 st.markdown("---")
-            
+                        
             # Then show nearby from Overpass
             st.markdown("**Nearby Police Stations (from map data):**")
             nearest_police = []
@@ -1119,14 +1201,14 @@ if loc_input:
                     distance = geodesic((lat, lon), (latp, lonp)).km
                     phone = tags.get('phone', 'Call 100')
                     nearest_police.append((name, distance, phone))
-
+            
             if nearest_police:
                 nearest_police.sort(key=lambda x: x[1])
                 for name, dist, phone in nearest_police[:10]:  # show top 10 closest
                     st.write(f"• **{name}** – {dist:.2f} km away | Contact: {phone}")
             else:
                 st.write("No nearby police stations found in map data.")
-            
+                        
             if not csv_police and not nearest_police:
                 st.info("In emergency, dial **100** for police assistance anywhere in India.")
 
@@ -1168,4 +1250,4 @@ st.markdown(
     "5. Emergency numbers are for India. Always verify local emergency contacts.\n"
     "6. In case of immediate danger, prioritize your safety and call emergency services.\n"
     "7. Police station data is loaded from police.csv - ensure the file is in the same directory."
-            )
+)
