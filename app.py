@@ -592,22 +592,59 @@ if show_pois and not police_df.empty:
     with st.spinner("Loading police stations from database..."):
         police_layer = folium.FeatureGroup(name="🚔 Police Stations")
         
-        # Use police stations from CSV
+        # Create a dictionary for quick district lookup with coordinates
+        district_coords = {}
+        for _, row in merged.iterrows():
+            district_norm = row['district_norm']
+            if district_norm not in district_coords and row.geometry:
+                try:
+                    centroid = row.geometry.centroid
+                    district_coords[district_norm] = (centroid.y, centroid.x)
+                except:
+                    pass
+        
+        # Add police stations from CSV
+        added_stations = 0
         for _, station in police_df.iterrows():
-            # Skip if no address or essential info
-            if pd.isna(station['name']) or pd.isna(station['address']):
+            # Skip if no essential info
+            if pd.isna(station['name']) or pd.isna(station['district']):
                 continue
             
-            # For this simplified version, we'll only show stations if they have coordinates
-            # In a production system, you'd geocode the addresses
-            # Here we'll just show a message that coordinates are needed
+            # Normalize district name to match with our mapping
+            station_district_norm = normalize_name(station['district'])
             
-            # You can add geocoding here if needed:
-            # location = geolocator.geocode(station['address'])
-            # if location:
-            #     lat, lon = location.latitude, location.longitude
-            
-        st.info("Note: To display police stations on map, coordinates are needed. Consider geocoding addresses.")
+            # Get coordinates from district centroid
+            if station_district_norm in district_coords:
+                stat_lat, stat_lon = district_coords[station_district_norm]
+                
+                # Create popup with station details
+                phone_info = f"<b>Phone:</b> {station['phone']}<br>" if pd.notna(station['phone']) and station['phone'] != 'Not available' else ""
+                
+                popup_html = f"""
+                <div style="font-family: Arial; max-width: 250px;">
+                    <h4 style="margin: 0 0 8px 0; color: #c0392b;">🚔 {station['name']}</h4>
+                    <hr style="margin: 5px 0;">
+                    <b>District:</b> {station['district']}<br>
+                    <b>State:</b> {station['state']}<br>
+                    <b>Address:</b> {station['address']}<br>
+                    {phone_info}
+                    <hr style="margin: 5px 0;">
+                    <small style="color: #7f8c8d;">Emergency: <b>100</b></small>
+                </div>
+                """
+                
+                folium.Marker(
+                    location=[stat_lat, stat_lon],
+                    popup=folium.Popup(popup_html, max_width=270),
+                    tooltip=f"🚔 {station['name']}",
+                    icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
+                ).add_to(police_layer)
+                
+                added_stations += 1
+        
+        police_layer.add_to(m)
+        if added_stations > 0:
+            st.success(f"Added {added_stations} police stations to the map (using district centroids)")
 
 # Add legend
 legend_html = f"""
@@ -1131,4 +1168,4 @@ st.markdown(
     "5. Emergency numbers are for India. Always verify local emergency contacts.\n"
     "6. In case of immediate danger, prioritize your safety and call emergency services.\n"
     "7. Police station data is loaded from police.csv - ensure the file is in the same directory."
-                    )
+            )
