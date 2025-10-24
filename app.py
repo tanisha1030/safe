@@ -30,26 +30,28 @@ st.markdown(
 )
 
 # --------------------------- 
-# LOAD POLICE STATIONS FROM JSON
+# LOAD POLICE STATIONS FROM CSV
 # ---------------------------
-@st.cache_data
-def load_police_stations():
-    """Load police stations from JSON file"""
+@st.cache_data(show_spinner=False)
+def load_police_stations_csv(filepath="police.csv"):
+    """Load police station data from CSV file"""
     try:
-        with open('police_districts.json', 'r', encoding='utf-8') as f:
-            police_data = json.load(f)
-        return police_data
+        df = pd.read_csv(filepath)
+        # Clean column names (remove extra spaces)
+        df.columns = df.columns.str.strip()
+        return df
     except FileNotFoundError:
-        st.warning("police_districts.json file not found. Please ensure the file exists in the same directory.")
-        return []
-    except json.JSONDecodeError:
-        st.error("Error reading police_districts.json. Please check the JSON format.")
-        return []
+        st.warning(f"Police station CSV file '{filepath}' not found. Emergency contacts will be limited.")
+        return pd.DataFrame()
+    except Exception as e:
+        st.warning(f"Error loading police stations CSV: {str(e)}")
+        return pd.DataFrame()
 
-POLICE_STATIONS = load_police_stations()
+# Load police stations data
+police_df = load_police_stations_csv()
 
 # --------------------------- 
-# EMERGENCY CONTACTS DATABASE (National services only)
+# EMERGENCY CONTACTS DATABASE (National & Specialized only)
 # ---------------------------
 EMERGENCY_CONTACTS = {
     "National": {
@@ -78,6 +80,36 @@ EMERGENCY_CONTACTS = {
     }
 }
 
+def get_police_stations_for_district(district_name, state_name=None):
+    """Get police stations from CSV for a specific district"""
+    if police_df.empty:
+        return []
+    
+    # Normalize district name for matching
+    district_normalized = normalize_name(district_name)
+    
+    # Filter police stations by district
+    filtered = police_df.copy()
+    filtered['district_normalized'] = filtered['district'].apply(normalize_name)
+    
+    matches = filtered[filtered['district_normalized'] == district_normalized]
+    
+    # If state is provided, also filter by state
+    if state_name and not matches.empty:
+        matches = matches[matches['state'].str.lower() == state_name.lower()]
+    
+    # Convert to list of dictionaries
+    stations = []
+    for _, row in matches.iterrows():
+        station_info = {
+            'name': row['name'],
+            'address': row['address'],
+            'phone': row['phone'] if pd.notna(row['phone']) and row['phone'] != 'Not available' else None
+        }
+        stations.append(station_info)
+    
+    return stations
+
 def display_emergency_contacts():
     """Display emergency contacts in an organized manner"""
     st.sidebar.markdown("---")
@@ -93,60 +125,13 @@ def display_emergency_contacts():
         for service, number in EMERGENCY_CONTACTS["Specialized Services"].items():
             st.markdown(f"**{service}:** `{number}`")
     
-    # Police Stations by State/District
-    if POLICE_STATIONS:
-        with st.sidebar.expander("🚔 Police Stations Database"):
-            # Get unique states
-            states = sorted(list(set([station['state'] for station in POLICE_STATIONS])))
-            
-            selected_state = st.selectbox(
-                "Select State:",
-                ["Select..."] + states,
-                key="state_police"
-            )
-            
-            if selected_state != "Select...":
-                # Get districts in selected state
-                districts_in_state = sorted(list(set([
-                    station['district'] for station in POLICE_STATIONS 
-                    if station['state'] == selected_state
-                ])))
-                
-                selected_district = st.selectbox(
-                    "Select District:",
-                    ["All Districts"] + districts_in_state,
-                    key="district_police"
-                )
-                
-                # Filter stations
-                if selected_district == "All Districts":
-                    filtered_stations = [s for s in POLICE_STATIONS if s['state'] == selected_state]
-                else:
-                    filtered_stations = [
-                        s for s in POLICE_STATIONS 
-                        if s['state'] == selected_state and s['district'] == selected_district
-                    ]
-                
-                st.markdown(f"**Found {len(filtered_stations)} police stations**")
-                
-                # Display stations (limit to first 10)
-                for station in filtered_stations[:10]:
-                    st.markdown(f"📍 **{station['name']}**")
-                    if station.get('phone') and station['phone'] != "Not Available":
-                        st.markdown(f"   ☎️ {station['phone']}")
-                    st.markdown(f"   📫 {station['address']}")
-                    st.markdown("---")
-                
-                if len(filtered_stations) > 10:
-                    st.info(f"Showing 10 of {len(filtered_stations)} stations")
-    
     # Quick dial section
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📞 Quick Emergency Dial")
     
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("🚓 Police\n100", key="police_btn"):
+        if st.button("🚔 Police\n100", key="police_btn"):
             st.sidebar.success("Dial: 100")
         if st.button("🔥 Fire\n101", key="fire_btn"):
             st.sidebar.success("Dial: 101")
@@ -158,18 +143,19 @@ def display_emergency_contacts():
             st.sidebar.success("Dial: 1091")
 
 def get_region_specific_contacts(district_name, state_name=None):
-    """Get emergency contacts and police stations specific to a region"""
+    """Get emergency contacts specific to a region"""
     contacts = EMERGENCY_CONTACTS["National"].copy()
     
-    # Find police stations in the district
-    district_stations = []
-    for station in POLICE_STATIONS:
-        if district_name and district_name.lower() in station['district'].lower():
-            district_stations.append(station)
-        elif state_name and state_name.lower() in station['state'].lower():
-            district_stations.append(station)
+    # Get police stations from CSV for this district
+    police_stations = get_police_stations_for_district(district_name, state_name)
     
-    return contacts, district_stations
+    # Add police stations to contacts
+    for i, station in enumerate(police_stations[:3]):  # Limit to first 3 stations
+        station_name = station['name']
+        if station['phone']:
+            contacts[station_name] = station['phone']
+    
+    return contacts
 
 # --------------------------- 
 # PARAMETERS - Updated working URLs
@@ -292,6 +278,12 @@ if crime_agg.empty:
         st.write(failed_reads[:5])
     st.stop()
 st.success(f"Loaded and aggregated {len(csv_files)} CSV(s) from `{DATA_FOLDER}`; found {len(crime_agg)} distinct normalized districts.")
+
+# Display status of police stations data
+if not police_df.empty:
+    st.success(f"Loaded {len(police_df)} police stations from police.csv")
+else:
+    st.warning("Police stations CSV not loaded. Only national emergency numbers will be available.")
 
 # Display emergency contacts in sidebar
 display_emergency_contacts()
@@ -562,24 +554,11 @@ def create_tooltip_html(row):
 # Add district polygons with enhanced styling
 district_layer = folium.FeatureGroup(name="🏛️ Districts")
 for _, row in merged.iterrows():
-    # Create popup with detailed information including emergency contacts
-    contacts, district_stations = get_region_specific_contacts(row[name_col])
-    
+    # Create popup with detailed information including emergency contacts from CSV
+    region_contacts = get_region_specific_contacts(row[name_col])
     emergency_info = ""
-    for service, number in list(contacts.items())[:3]:  # Show first 3 emergency numbers
+    for service, number in list(region_contacts.items())[:5]:  # Show first 5 emergency numbers
         emergency_info += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
-    
-    # Add police stations info if available
-    station_info = ""
-    if district_stations:
-        station_info = f"<h5 style='margin: 5px 0; color: #c0392b;'>🚔 Police Stations ({len(district_stations)}):</h5>"
-        for station in district_stations[:3]:  # Show first 3 stations
-            station_info += f"<p style='margin: 3px 0; font-size: 10px;'>📍 {station['name']}"
-            if station.get('phone') and station['phone'] != "Not Available":
-                station_info += f"<br>☎️ {station['phone']}"
-            station_info += "</p>"
-        if len(district_stations) > 3:
-            station_info += f"<small>+ {len(district_stations) - 3} more stations</small>"
     
     popup_html = f"""
     <div style="font-family: Arial; max-width: 300px;">
@@ -594,7 +573,6 @@ for _, row in merged.iterrows():
         <table style="width: 100%; font-size: 11px;">
             {emergency_info}
         </table>
-        {station_info}
         <hr style="margin: 10px 0;">
         <small style="color: #7f8c8d;">Based on aggregated crime data from multiple sources</small>
     </div>
@@ -609,54 +587,27 @@ for _, row in merged.iterrows():
 
 district_layer.add_to(m)
 
-# Add police stations layer if enabled
-if show_pois and POLICE_STATIONS:
-    with st.spinner("Loading police stations across India..."):
+# Add police stations layer if enabled - FROM CSV
+if show_pois and not police_df.empty:
+    with st.spinner("Loading police stations from database..."):
         police_layer = folium.FeatureGroup(name="🚔 Police Stations")
-        geolocator = Nominatim(user_agent="india-crime-heatmap-app", timeout=10)
         
-        stations_added = 0
-        max_stations = 500  # Limit to avoid overloading map
-        
-        for station in POLICE_STATIONS:
-            if stations_added >= max_stations:
-                break
-                
-            # Try to geocode the station address
-            try:
-                location = geolocator.geocode(station['address'] + ", India")
-                if location:
-                    # Prepare popup HTML
-                    phone_info = ""
-                    if station.get('phone') and station['phone'] != "Not Available":
-                        phone_info = f"<b>Phone:</b> {station['phone']}<br>"
-                    
-                    popup_html = f"""
-                    <div style="font-family: Arial;">
-                        <h4 style="margin: 0; color: #c0392b;">🚔 {station['name']}</h4>
-                        <hr style="margin: 5px 0;">
-                        <b>District:</b> {station['district']}<br>
-                        <b>State:</b> {station['state']}<br>
-                        {phone_info}
-                        <b>Address:</b> {station['address']}<br>
-                        <small style="color: #7f8c8d;">Emergency: 100</small>
-                    </div>
-                    """
-                    
-                    folium.Marker(
-                        location=[location.latitude, location.longitude],
-                        popup=folium.Popup(popup_html, max_width=300),
-                        tooltip=f"🚔 {station['name']}",
-                        icon=folium.Icon(color='red', icon='shield-alt', prefix='fa')
-                    ).add_to(police_layer)
-                    
-                    stations_added += 1
-            except Exception as e:
-                # Skip stations that fail to geocode
+        # Use police stations from CSV
+        for _, station in police_df.iterrows():
+            # Skip if no address or essential info
+            if pd.isna(station['name']) or pd.isna(station['address']):
                 continue
-        
-        police_layer.add_to(m)
-        st.sidebar.info(f"Loaded {stations_added} police stations on map")
+            
+            # For this simplified version, we'll only show stations if they have coordinates
+            # In a production system, you'd geocode the addresses
+            # Here we'll just show a message that coordinates are needed
+            
+            # You can add geocoding here if needed:
+            # location = geolocator.geocode(station['address'])
+            # if location:
+            #     lat, lon = location.latitude, location.longitude
+            
+        st.info("Note: To display police stations on map, coordinates are needed. Consider geocoding addresses.")
 
 # Add legend
 legend_html = f"""
@@ -801,16 +752,24 @@ if loc_input:
                     color = "🟢" if safety == "Low" else ("🟡" if safety == "Medium" else "🔴")
                     st.success(f"You are in/near **{district_name}** – Safety Level: **{safety}** {color} (crime count: {crime_count})")
                 
-                # Display location-specific emergency contacts and police stations
+                # Display location-specific emergency contacts from CSV
                 st.subheader("📞 Emergency Contacts for Your Area")
-                region_contacts, district_stations = get_region_specific_contacts(district_name)
                 
-                # Create emergency contact cards
-                emergency_cols = st.columns(3)
-                contact_items = list(region_contacts.items())
+                # Get police stations from CSV for this district
+                police_stations = get_police_stations_for_district(district_name)
                 
-                for i, (service, number) in enumerate(contact_items[:9]):  # Show up to 9 contacts
-                    with emergency_cols[i % 3]:
+                # Display national emergency contacts
+                st.markdown("#### 🇮🇳 National Emergency Numbers")
+                emergency_cols = st.columns(4)
+                national_contacts = [
+                    ("🚔 Police", "100"),
+                    ("🚑 Ambulance", "102"),
+                    ("🔥 Fire", "101"),
+                    ("👩 Women Helpline", "1091")
+                ]
+                
+                for i, (service, number) in enumerate(national_contacts):
+                    with emergency_cols[i]:
                         st.markdown(f"""
                         <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; border-left: 4px solid #dc3545; margin-bottom: 10px;">
                             <h6 style="margin: 0; color: #dc3545;">{service}</h6>
@@ -818,28 +777,29 @@ if loc_input:
                         </div>
                         """, unsafe_allow_html=True)
                 
-                # Display police stations from JSON
-                if district_stations:
-                    st.subheader(f"🚔 Police Stations in {district_name} ({len(district_stations)})")
-                    
-                    for station in district_stations[:10]:  # Show first 10 stations
-                        with st.expander(f"📍 {station['name']}"):
-                            st.write(f"**District:** {station['district']}")
-                            st.write(f"**State:** {station['state']}")
-                            st.write(f"**Address:** {station['address']}")
-                            if station.get('phone') and station['phone'] != "Not Available":
-                                st.write(f"**Phone:** {station['phone']}")
-                            st.write("**Emergency:** 100")
-                    
-                    if len(district_stations) > 10:
-                        st.info(f"Showing 10 of {len(district_stations)} police stations in this district")
+                # Display local police stations from CSV
+                if police_stations:
+                    st.markdown("#### 🚔 Local Police Stations")
+                    for station in police_stations[:5]:  # Show up to 5 stations
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.markdown(f"**{station['name']}**")
+                            st.caption(f"📍 {station['address']}")
+                        with col2:
+                            if station['phone']:
+                                st.markdown(f"**📞 {station['phone']}**")
+                            else:
+                                st.markdown("*Phone: N/A*")
+                        st.markdown("---")
+                else:
+                    st.info("No local police station data available for this district. Use national emergency number 100.")
                 
                 # Quick dial buttons for essential services
                 st.markdown("### 🚨 Quick Emergency Actions")
                 emergency_actions = st.columns(4)
                 
                 with emergency_actions[0]:
-                    if st.button("🚓 Call Police (100)", type="primary", key="quick_police"):
+                    if st.button("🚔 Call Police (100)", type="primary", key="quick_police"):
                         st.success("Emergency Number: 100\n\nDial immediately for police assistance")
                 
                 with emergency_actions[1]:
@@ -907,7 +867,7 @@ if loc_input:
                 try:
                     geom = row.geometry
                     lvl = row['safety_level']
-                    district_name_local = row[name_col]
+                    district_name = row[name_col]
                     crime_count = int(row['crime_total'])
                     
                     if lvl == "No Data":
@@ -923,25 +883,22 @@ if loc_input:
                         color = "#6bcf7f"
                         border_color = "#51b364"
                     
-                    # Enhanced popup for districts with emergency contacts
-                    district_contacts, district_stations_local = get_region_specific_contacts(district_name_local)
+                    # Enhanced popup for districts with emergency contacts from CSV
+                    district_police = get_police_stations_for_district(district_name)
                     emergency_list = ""
-                    for service, number in list(district_contacts.items())[:5]:
+                    
+                    # Add national contacts
+                    for service, number in list(EMERGENCY_CONTACTS["National"].items())[:3]:
                         emergency_list += f"<tr><td>{service}:</td><td><b>{number}</b></td></tr>"
                     
-                    # Add police stations info
-                    station_list = ""
-                    if district_stations_local:
-                        station_list = f"<h6 style='margin: 5px 0;'>🚔 Police Stations ({len(district_stations_local)}):</h6>"
-                        for station in district_stations_local[:3]:
-                            station_list += f"<p style='margin: 2px 0; font-size: 9px;'>📍 {station['name']}"
-                            if station.get('phone') and station['phone'] != "Not Available":
-                                station_list += f"<br>☎️ {station['phone']}"
-                            station_list += "</p>"
+                    # Add local police stations from CSV
+                    for station in district_police[:2]:
+                        if station['phone']:
+                            emergency_list += f"<tr><td>{station['name']}:</td><td><b>{station['phone']}</b></td></tr>"
                     
                     popup_html = f"""
                     <div style="font-family: Arial; max-width: 280px;">
-                        <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{district_name_local}</h4>
+                        <h4 style="margin: 0 0 8px 0; color: #2c3e50;">{district_name}</h4>
                         <table style="width: 100%; font-size: 11px; margin-bottom: 10px;">
                             <tr><td><b>Safety Level:</b></td><td>{lvl}</td></tr>
                             <tr><td><b>Crime Count:</b></td><td>{crime_count:,}</td></tr>
@@ -952,7 +909,6 @@ if loc_input:
                         <table style="width: 100%; font-size: 10px;">
                             {emergency_list}
                         </table>
-                        {station_list}
                     </div>
                     """
                     
@@ -966,7 +922,7 @@ if loc_input:
                             'opacity': 1
                         },
                         popup=folium.Popup(popup_html, max_width=300),
-                        tooltip=f"{district_name_local} - {lvl}"
+                        tooltip=f"{district_name} - {lvl}"
                     ).add_to(m_local)
                 except Exception:
                     pass
@@ -1098,52 +1054,43 @@ if loc_input:
             with col4:
                 st.metric("🏨 Shelters", poi_categories['shelter']['count'])
 
-            # List nearest police stations from JSON file
+            # List nearest police stations from CSV and Overpass
             st.subheader("🚔 Nearest Police Stations")
+            
+            # First show police stations from CSV for this district
+            csv_police = get_police_stations_for_district(district_name)
+            if csv_police:
+                st.markdown("**Local Police Stations (from database):**")
+                for station in csv_police:
+                    phone_str = f"| Contact: **{station['phone']}**" if station['phone'] else "| Contact: **Call 100**"
+                    st.write(f"• **{station['name']}** – {station['address']} {phone_str}")
+                st.markdown("---")
+            
+            # Then show nearby from Overpass
+            st.markdown("**Nearby Police Stations (from map data):**")
             nearest_police = []
-            
-            # Try to load from JSON file first
-            if POLICE_STATIONS:
-                # Find stations near the user's location
-                for station in POLICE_STATIONS:
-                    try:
-                        station_location = geolocator.geocode(station['address'] + ", India")
-                        if station_location:
-                            distance = geodesic((lat, lon), (station_location.latitude, station_location.longitude)).km
-                            
-                            # Only include stations within reasonable distance
-                            if distance <= search_radius:
-                                phone = station.get('phone', 'Call 100')
-                                if phone == "Not Available":
-                                    phone = "Call 100"
-                                nearest_police.append((station['name'], distance, phone, station['district']))
-                    except:
+            for el in elements:
+                tags = el.get('tags', {})
+                if tags.get('amenity') in ('police','police_station'):
+                    if el.get('type') == 'node':
+                        latp, lonp = el['lat'], el['lon']
+                    elif 'center' in el:
+                        latp, lonp = el['center']['lat'], el['center']['lon']
+                    else:
                         continue
-            
-            # Fallback to OpenStreetMap data if no JSON stations found
-            if not nearest_police:
-                for el in elements:
-                    tags = el.get('tags', {})
-                    if tags.get('amenity') in ('police','police_station'):
-                        if el.get('type') == 'node':
-                            latp, lonp = el['lat'], el['lon']
-                        elif 'center' in el:
-                            latp, lonp = el['center']['lat'], el['center']['lon']
-                        else:
-                            continue
-                        name = tags.get('name', 'Police Station')
-                        distance = geodesic((lat, lon), (latp, lonp)).km
-                        phone = tags.get('phone', 'Call 100')
-                        nearest_police.append((name, distance, phone, 'N/A'))
+                    name = tags.get('name', 'Police Station')
+                    distance = geodesic((lat, lon), (latp, lonp)).km
+                    phone = tags.get('phone', 'Call 100')
+                    nearest_police.append((name, distance, phone))
 
             if nearest_police:
                 nearest_police.sort(key=lambda x: x[1])
-                for name, dist, phone, district in nearest_police[:10]:  # show top 10 closest
-                    phone_display = f" | Contact: {phone}" if phone != "Call 100" else ""
-                    district_display = f" ({district})" if district != 'N/A' else ""
-                    st.write(f"• **{name}**{district_display} – {dist:.2f} km away{phone_display}")
+                for name, dist, phone in nearest_police[:10]:  # show top 10 closest
+                    st.write(f"• **{name}** – {dist:.2f} km away | Contact: {phone}")
             else:
-                st.write("No nearby police stations found in the area.")
+                st.write("No nearby police stations found in map data.")
+            
+            if not csv_police and not nearest_police:
                 st.info("In emergency, dial **100** for police assistance anywhere in India.")
 
 # Add emergency preparedness tips
@@ -1183,5 +1130,5 @@ st.markdown(
     "4. Crime scores are relative - 'Low/Medium/High' are based on quantiles within your dataset.\n"
     "5. Emergency numbers are for India. Always verify local emergency contacts.\n"
     "6. In case of immediate danger, prioritize your safety and call emergency services.\n"
-    "7. Police station data is loaded from police_districts.json file."
-                            )
+    "7. Police station data is loaded from police.csv - ensure the file is in the same directory."
+                    )
